@@ -91,6 +91,7 @@ class LQR:
         x, u, x_new = state
         mu = np.dot(K, x)
         prob = self.cdf(u+resolution/2, mu, self.var_ctrl)-self.cdf(u-resolution/2, mu, self.var_ctrl)
+        # print(u, mu, self.var_ctrl, prob)
         return max(prob, eps_ctrl)
 
     def prob_trajectory(self, traj: List[Tuple[float, float, float]], metadata: List[Tuple[np.ndarray, float]],
@@ -129,6 +130,7 @@ class LQR:
         for state, metadata in zip(traj, metadata):
             prob += np.log(self.prob_state_transition(state, resolution_dyn, eps_dyn))
             prob += np.log(self.prob_action(state, metadata[0], resolution_ctrl, eps_ctrl))
+            print(prob)
         return prob
 
     @staticmethod
