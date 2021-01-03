@@ -48,11 +48,11 @@ if __name__ == "__main__":
 
     fig, axs = plt.subplots(2, 2)
     for _ in range(num_to_sim):
-        traj_human, metadata_human = human.generate_trajectory(x0, N)
-        traj_comp, metadata_comp = controller.generate_trajectory(x0, N)
+        x_human, u_human, metadata_human = human.generate_trajectory(x0, N)
+        x_comp, u_comp, metadata_comp = controller.generate_trajectory(x0, N)
 
-        traj_human_plt = [x[0, 0] for x in controller.extract_trajectory_from_transition_trajectory(traj_human)]
-        traj_comp_plt = [x[0, 0] for x in controller.extract_trajectory_from_transition_trajectory(traj_comp)]
+        traj_human_plt = [x[0, 0] for x in x_human]
+        traj_comp_plt = [x[0, 0] for x in x_comp]
         idx_human_plt = np.arange(0, len(traj_human_plt))
         idx_comp_plt = np.arange(0, len(traj_comp_plt))
 
@@ -70,21 +70,33 @@ if __name__ == "__main__":
         axs[0, 0].plot(idx_comp_plt, traj_comp_plt, 'r', alpha=0.05)
 
         # Human trajectory (estimated via computer metadata)
-        traj_probs_human.append(controller.log_prob_trajectory(traj_human, metadata_comp, resolution_dyn,
+        traj_probs_human.append(controller.log_prob_trajectory(x_human, u_human, metadata_comp, resolution_dyn,
                                                                resolution_ctrl, eps, eps))
-        for state, metadatum_comp in zip(traj_human, metadata_comp):
-            state_transition_probs_human.append(controller.log_prob_state_transition(state, resolution_dyn,eps))
-            action_probs_human.append(controller.log_prob_action(state, metadatum_comp[0], resolution_ctrl, eps))
+        # for state, metadatum_comp in zip(traj_human, metadata_comp):
+        for t in range(len(u_human)):
+            state_transition_probs_human.append(controller.log_prob_state_transition(x_human[t], u_human[t],
+                                                                                     x_human[t+1],
+                                                                                     resolution_dyn, eps))
+            action_probs_human.append(controller.log_prob_action(x_human[t], u_human[t], metadata_human[t][0],
+                                                                 resolution_ctrl, eps))
 
         # Computer trajectory
-        traj_probs_comp.append(controller.log_prob_trajectory(traj_comp, metadata_comp, resolution_dyn,
+        traj_probs_comp.append(controller.log_prob_trajectory(x_comp, u_comp, metadata_comp, resolution_dyn,
                                                               resolution_ctrl, eps, eps))
-        for state, metadatum_comp, metadatum_human in zip(traj_comp, metadata_comp, metadata_human):
-            state_transition_probs_comp.append(controller.log_prob_state_transition(state, resolution_dyn, eps))
-            action_probs_comp.append(controller.log_prob_action(state, metadatum_comp[0], resolution_ctrl, eps))
+        # for state, metadatum_comp, metadatum_human in zip(traj_comp, metadata_comp, metadata_human):
+        #     state_transition_probs_comp.append(controller.log_prob_state_transition(state, resolution_dyn, eps))
+        #     action_probs_comp.append(controller.log_prob_action(state, metadatum_comp[0], resolution_ctrl, eps))
+        for t in range(len(u_comp)):
+            state_transition_probs_comp.append(controller.log_prob_state_transition(x_comp[t], u_comp[t],
+                                                                                     x_comp[t+1],
+                                                                                     resolution_dyn, eps))
+            action_probs_comp.append(controller.log_prob_action(x_comp[t], u_comp[t], metadata_comp[t][0],
+                                                                 resolution_ctrl, eps))
 
     avg_traj_human = [x/num_to_sim for x in avg_traj_human]
     avg_traj_comp = [x/num_to_sim for x in avg_traj_comp]
+    idx_human_plt = np.arange(0, len(avg_traj_human))
+    idx_comp_plt = np.arange(0, len(avg_traj_comp))
     traj_probs_human_mean = np.mean(traj_probs_human)
     traj_probs_human_var = np.var(traj_probs_human)
     traj_probs_comp_mean = np.mean(traj_probs_comp)
@@ -115,13 +127,13 @@ if __name__ == "__main__":
     axs[0, 1].legend()
 
     axs[1, 0].hist(state_transition_probs_human, 50, density=True, facecolor='b', alpha=0.75, label='Human')
-    axs[1, 0].hist(state_transition_probs_comp, 50, density=True, facecolor='r', alpha=0.75, label='Robot')
+    axs[1, 0].hist(state_transition_probs_comp, 75, density=True, facecolor='r', alpha=0.75, label='Robot')
     axs[1, 0].set_ylabel('Probability Density')
     axs[1, 0].set_title(r'$(c) log(p(x_{t+1} | x_t, u_t)),\ q^h = '+str(qh)+', r^h = '+str(rh)+'$')
     axs[1, 0].legend()
 
     axs[1, 1].hist(action_probs_human, 100, density=True, facecolor='b', alpha=1, label='Human')
-    axs[1, 1].hist(action_probs_comp, 25, density=True, facecolor='r', alpha=0.5, label='Robot')
+    axs[1, 1].hist(action_probs_comp, 100, density=True, facecolor='r', alpha=0.5, label='Robot')
     axs[1, 1].set_ylabel('Probability Density')
     axs[1, 1].set_title(r'$(d) log(p(u_t | x_t)),\ q^h = '+str(qh)+', r^h = '+str(rh)+'$')
     plt.legend()

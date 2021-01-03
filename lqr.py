@@ -16,14 +16,14 @@ class LQR:
         self.cov_dyn = cov_dyn
         self.cov_ctrl = cov_ctrl
 
-    def generate_trajectory(self, x0: np.ndarray, N: int) -> Tuple[List[Tuple[np.ndarray, np.ndarray, np.ndarray]],
+    def generate_trajectory(self, x0: np.ndarray, N: int) -> Tuple[List[np.ndarray], List[np.ndarray],
                                                                    List[Tuple[np.ndarray, float]]]:
         """
         Generate trajectory (given dynamics and controller noise) starting at x0 and continuing for N time steps
 
-        :param x0:
-        :param N:
-        :return: [(s_t, a_t, s_{t+1})], t = 0, ..., N-1
+        :param x0: Initial position
+        :param N: Number of time steps to traverse over
+        :return: (x_t, u_t, [K_t, J_t]), t = 0, ..., N-1 (or N for x_t)
         """
         # x = x0
         P = self.F
@@ -42,101 +42,132 @@ class LQR:
             Ks.insert(0, K)
             Ps.insert(0, P)
 
-        traj = []
+        # traj = []
+        xs = [x0]
+        us = []
         metadata = []
         x = x0
         for t in range(N):
-            # u = np.dot(Ks[t], x) + np.random.normal(0, self.cov_ctrl)
-            # x_new = np.dot(self.A, x) + np.dot(self.B, u) + np.random.normal(0, self.cov_dyn)
             u_shape = np.shape(np.dot(Ks[t], x))
             u = mvn.rvs(np.dot(Ks[t], x), self.cov_ctrl)
             x_new = mvn.rvs(np.dot(self.A, x) + np.dot(self.B, u), self.cov_dyn)
 
             u = np.reshape(u, u_shape)
             x_new = np.reshape(x_new, np.shape(x))
-            traj.append((x, u, x_new))
+            xs.append(x_new)
+            us.append(u)
+            # traj.append((x, u, x_new))
 
             # Calculate some metadata for postprocessing
-            x_T = np.transpose(x)
-            J = 0.5*multi_dot([x_T, Ps[t], x])
+            J = 0.5*multi_dot([np.transpose(x), Ps[t], x])
             metadata.append((Ks[t], J))
             x = x_new
 
-        return traj, metadata
+        return xs, us, metadata
+        # return traj, metadata
 
-    def log_prob_state_transition(self, state: Tuple[np.ndarray, np.ndarray, np.ndarray], resolution: float = 0.1,
+    def log_prob_state_transition(self, x: np.ndarray, u: np.ndarray, x_new: np.ndarray, resolution: float = 0.1,
                                   eps_dyn: float = 1e-30) -> np.ndarray:
         """
         Calculates the probability of a state transition
 
         s_{t+1} ~ Normal(Ax + Bu, cov_dynamics)
         p(s_{t+1} | s_t, a_t) = CDF(s_{t+1} + resolution/2) - CDF(s_{t+1} - resolution/2)
-        :param state: Tuple of 3 items: (s_t, a_t, s_{t+1})
+        :param x: x_t
+        :param u: u_t
+        :param x_new: x_{t+1}
         :param resolution: The resolution used to calculate the CDF difference
+        :param eps_dyn: A minimum value for the probability (used to prevent np.log(0.0) errors if a transition is
+        virtually impossible)
         :return: probability of state transition i p(s_{t+1} | s_t, a_t)
         """
-        x, u, x_new = state
         mu = np.dot(self.A, x) + np.dot(self.B, u)
         prob = mvn.cdf(x_new + resolution/2, mu, self.cov_dyn) - mvn.cdf(x_new - resolution/2, mu, self.cov_dyn)
         # prob = self.log_normal_pdf(x_new, mu, self.cov_dyn)
         return np.log(np.maximum(prob, eps_dyn))
 
-    def log_prob_action(self, state: Tuple[np.ndarray, np.ndarray, np.ndarray], K: np.ndarray, resolution: float = 0.1,
+    def log_prob_action(self, x: np.ndarray, u: np.ndarray, K: np.ndarray, resolution: float = 0.1,
                         eps_ctrl: float = 1e-30) -> np.ndarray:
         """
         Calculates the probability of a state transition
 
         a_t ~ Normal(K_t*s_t, cov_ctrl)
         p(a_t | s_t) = CDF(a_t + resolution/2) - CDF(a_t - resolution/2)
-        :param state: Tuple of 3 items: (s_t, a_t, s_{t+1})
-        :param K: control matrix
+        :param x: x_t
+        :param u: u_t
+        :param K: control matrix K_t
         :param resolution: The resolution used to calculate the CDF difference
+        :param eps_ctrl: A minimum value for the probability (used to prevent np.log(0.0) errors if an input is
+        virtually impossible)
         :return: probability of state transition i p(a_t | s_t)
         """
-        x, u, x_new = state
         mu = np.dot(K, x)
         prob = mvn.cdf(u + resolution/2, mu, self.cov_ctrl) - mvn.cdf(u - resolution/2, mu, self.cov_ctrl)
         # prob = self.log_normal_pdf(u, mu, self.cov_ctrl)
         return np.log(np.maximum(prob, eps_ctrl))
 
-    # def prob_trajectory(self, traj: List[Tuple[float, float, float]], metadata: List[Tuple[np.ndarray, float]],
-    #                     resolution_dyn: float = 0.1, resolution_ctrl: float = 0.1,
-    #                     eps_dyn: float = 1e-30, eps_ctrl: float = 1e-30) -> float:
-    #     """
-    #     Calculates the probability of a trajectory
-    #
-    #     p(traj) = p(s0) * prod_{t=0 to N} p(a_t | s_t)*p(s_{t+1} | s_t, a_t)
-    #     :param traj: List[Tuple[s_t, a_t, s_{t+1}]]
-    #     :param metadata: List[Tuple[K_t, J_t]]
-    #     :param resolution_dyn: Resolution of prob_state_transition
-    #     :param resolution_ctrl: Resolution of prob_action
-    #     :return: Probability of the trajectory
-    #     """
-    #     prob = 1  # p(s0)
-    #     for state, metadata in zip(traj, metadata):
-    #         prob *= self.prob_state_transition(state, resolution_dyn, eps_dyn)
-    #         prob *= self.prob_action(state, metadata[0], resolution_ctrl, eps_ctrl)
-    #     return prob
-
-    def log_prob_trajectory(self, traj: List[Tuple[np.ndarray, np.ndarray, np.ndarray]],
+    def log_prob_trajectory(self, xs: List[np.ndarray], us: List[np.ndarray],
                             metadata: List[Tuple[np.ndarray, float]],
                             resolution_dyn: float = 0.1, resolution_ctrl: float = 0.1,
-                            eps_dyn: np.ndarray = 1e-30, eps_ctrl: np.ndarray = 1e-30) -> np.ndarray:
+                            eps_dyn: float = 1e-30, eps_ctrl: float = 1e-30) -> np.ndarray:
         """
         Calculates the log probability of a trajectory
 
         p(traj) = log(p(s0)) + sum_{t=0 to N} log(p(a_t | s_t)) + log(p(s_{t+1} | s_t, a_t))
-        :param traj: List[Tuple[s_t, a_t, s_{t+1}]]
+        :param xs: {x_t}, t=0,...N
+        :param us: {u_t}, t=0,...N-1
         :param metadata: List[Tuple[K_t, J_t]]
         :param resolution_dyn: Resolution of prob_state_transition
         :param resolution_ctrl: Resolution of prob_action
+        :param eps_dyn: A minimum value for the probability (used to prevent np.log(0.0) errors if a transition is
+        virtually impossible)
+        :param eps_ctrl: A minimum value for the probability (used to prevent np.log(0.0) errors if an input is
+        virtually impossible)
         :return: Log robability of the trajectory
         """
         prob = np.log(1.0)  # p(s0)
-        for state, metadata in zip(traj, metadata):
-            prob += self.log_prob_state_transition(state, resolution_dyn, eps_dyn)
-            prob += self.log_prob_action(state, metadata[0], resolution_ctrl, eps_ctrl)
+        for t in range(len(us)):
+            prob += self.log_prob_state_transition(xs[t], us[t], xs[t+1], resolution_dyn, eps_dyn)
+            prob += self.log_prob_action(xs[t], us[t], metadata[t][0], resolution_ctrl, eps_ctrl)
         return prob
+
+    def dJ_dQ(self, xs_comp: List[np.ndarray], xs_human: List[np.ndarray]) -> np.ndarray:
+        dJ = np.empty_like(self.Q)
+        n, m = np.shape(self.Q)
+        for i in range(n):
+            for j in range(m):
+                dJ[i][j] = np.sum([x[i]*x[j] for x in xs_comp]) - np.sum([x[i]*x[j] for x in xs_human])
+        return dJ
+
+    def dJ_dR(self, us_comp: List[np.ndarray], us_human: List[np.ndarray]) -> np.ndarray:
+        dJ = np.empty_like(self.R)
+        n, m = np.shape(self.R)
+        for i in range(n):
+            for j in range(m):
+                dJ[i][j] = np.sum([u[i]*u[j] for u in us_comp]) - np.sum([u[i]*u[j] for u in us_human])
+        return -dJ
+
+    def dlog_prob_trajectory_dR(self, xs: List[np.ndarray], us: List[np.ndarray],
+                            metadata: List[Tuple[np.ndarray, float]], r: float, S: np.ndarray,
+                            resolution_dyn: float = 0.1, resolution_ctrl: float = 0.1,
+                            eps_dyn: float = 1e-30, eps_ctrl: float = 1e-30):
+        """
+        Calculate the two point estimator of dlog_prob_trajectory / dR
+        z = d*S
+
+        :param xs:
+        :param us:
+        :param metadata:
+        :param r:
+        :param S: perturbation vector sampled from unit sphere
+        :param resolution_dyn:
+        :param resolution_ctrl:
+        :param eps_dyn:
+        :param eps_ctrl:
+        :return:
+        """
+        pass
+
 
     @staticmethod
     def cdf(x, mu, var):
@@ -158,6 +189,9 @@ class LQR:
         return prob
 
     @staticmethod
-    def extract_trajectory_from_transition_trajectory(traj: List[Tuple[np.ndarray, np.ndarray, np.ndarray]]) -> \
-            List[np.ndarray]:
-        return [s[0] for s in traj] + [traj[-1][-1]]  # Add the final state to the end of the list
+    def traj_to_transition_traj(xs: List[np.ndarray], us: List[np.ndarray]) -> \
+            List[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        transition_traj = []
+        for t in range(len(us)):
+            transition_traj.append((xs[t], us[t], xs[t+1]))
+        return transition_traj
