@@ -3,11 +3,21 @@ from numpy.linalg import multi_dot, inv
 from typing import List, Tuple
 from scipy.stats import multivariate_normal as mvn
 from scipy.special import erf
+from utils import *
 
 
 class LQR:
     def __init__(self, A: np.ndarray, B: np.ndarray, Q: np.ndarray, R: np.ndarray, F: np.ndarray,
                  cov_dyn: np.ndarray, cov_ctrl: np.ndarray):
+        # assert is_positive_semidefinite(Q)
+        # assert is_symmetric(Q)
+        # assert is_positive_definite(R)
+        # assert is_symmetric(R)
+        # assert is_positive_semidefinite(F)
+        # assert is_symmetric(F)
+        assert np.shape(A)[0] == np.shape(cov_dyn)[0]  # dimension of state
+        assert np.shape(B)[1] == np.shape(cov_ctrl)[0]  # number of inputs
+
         self.A = A
         self.B = B
         self.Q = Q
@@ -17,7 +27,7 @@ class LQR:
         self.cov_ctrl = cov_ctrl
 
     def generate_trajectory(self, x0: np.ndarray, N: int) -> Tuple[List[np.ndarray], List[np.ndarray],
-                                                                   List[Tuple[np.ndarray, float]]]:
+                                                                   List[Tuple[np.ndarray, np.ndarray]]]:
         """
         Generate trajectory (given dynamics and controller noise) starting at x0 and continuing for N time steps
 
@@ -48,11 +58,10 @@ class LQR:
         metadata = []
         x = x0
         for t in range(N):
-            u_shape = np.shape(np.dot(Ks[t], x))
             u = mvn.rvs(np.dot(Ks[t], x), self.cov_ctrl)
-            x_new = mvn.rvs(np.dot(self.A, x) + np.dot(self.B, u), self.cov_dyn)
+            x_new = mvn.rvs(np.ndarray.flatten(np.dot(self.A, x) + np.dot(self.B, u)), self.cov_dyn)
+            x_new = np.reshape(x_new, (np.size(x_new), 1))
 
-            u = np.reshape(u, u_shape)
             x_new = np.reshape(x_new, np.shape(x))
             xs.append(x_new)
             us.append(u)
@@ -167,6 +176,10 @@ class LQR:
         :return:
         """
         pass
+
+    def loss_imitation_learning(self, xs, us, xs_true, us_true):
+        return np.sum([multi_dot([np.transpose(x - x_true), self.Q, x - x_true]) for x, x_true in zip(xs, xs_true)]) \
+               + np.sum([multi_dot([np.transpose(u - u_true), self.R, u - u_true]) for u, u_true in zip(us, us_true)])
 
 
     @staticmethod
