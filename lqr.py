@@ -1,6 +1,7 @@
 import numpy as np
 from numpy.linalg import multi_dot, inv
 from typing import List, Tuple
+from scipy.linalg import solve_discrete_are
 from scipy.stats import multivariate_normal as mvn
 from scipy.special import erf
 from utils import *
@@ -44,10 +45,14 @@ class LQR:
             A_T = np.transpose(self.A)
             B_T = np.transpose(self.B)
             K = -multi_dot([inv(self.R + multi_dot([B_T, P, self.B])), B_T, P, self.A])
+            K_test = -inv(self.R + self.B.T@P@self.B) @ self.B.T@P@self.A
             P = self.Q + multi_dot([A_T, P, self.A]) - \
                 multi_dot([multi_dot([A_T, P, self.B]),
                            inv(self.R + multi_dot([B_T, P, self.B])),
                            multi_dot([B_T, P, self.A])])
+            P_test = solve_discrete_are(self.A, self.B, self.Q, self.R)
+            assert np.isclose(K, K_test)
+            assert np.isclose(P, P_test)
 
             Ks.insert(0, K)
             Ps.insert(0, P)

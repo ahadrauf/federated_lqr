@@ -10,7 +10,7 @@ def is_positive_semidefinite(A: np.ndarray):
 
 
 def is_symmetric(A: np.ndarray):
-    return np.equal(A, np.transpose(A))
+    return np.all(np.equal(A, np.transpose(A)))
 
 
 def vectorization(A: np.ndarray):
@@ -31,6 +31,22 @@ def duplication_matrix(n: int):
             D_T += np.multiply(u_ij, vectorization(T_ij))
 
     return np.transpose(D_T)
+
+
+# def wishart(V, n, p):
+#     """
+#     Samples from a Wishart distribution
+#     Pensky 1998 notation --> Wikipedia: r -> n, k -> p, Sigma -> V
+#     This might be implemented wrong? I'm getting E[X] = n^2*V, while it should be n*V
+#
+#     :param V: Covariance matrix, dimensions pxp
+#     :param n: The number of degrees of freedom, n = p is the least informative
+#     :param p: The dimension of the output matrix (pxp)
+#     :return:
+#     """
+#     assert n > (p - 1)
+#     G = np.vstack([np.random.multivariate_normal(mean=np.zeros(p), cov=V) for _ in range(n)]).T
+#     return G@G.T
 
 
 # Original Author: Prof. Nipun Batra
