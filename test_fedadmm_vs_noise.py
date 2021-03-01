@@ -33,7 +33,7 @@ def initialize_LQR(n, m, VQ, VR, cacheAB=True):
 
 if __name__ == "__main__":
     n, m = 4, 2  # n = dimension of state space, m = # of inputs
-    N = 5  # trajectory length
+    N = 10  # trajectory length
     M = 10  # number of robots
     Ntraj = 1  # number of trajectories we sample from each robot
     VQ = np.eye(n)/n/n  # covariance of Wishart distribution of Q
@@ -68,10 +68,13 @@ if __name__ == "__main__":
     costs_admm_vsN, std_costs_admm_vsN = [], []
     costs_fedadmmK_vsN, std_costs_fedadmmK_vsN = [], []
     costs_fedadmmQR_vsN, std_costs_fedadmmQR_vsN = [], []
-    N_range = np.arange(1, 51)
+    W_range = np.arange(1, 20)/2.
     seed_range = np.arange(1, 6)
-    for N in N_range:
-        print("N =", N, end=" - ")
+    for W in W_range:
+        print("W =", W, end=" - ", flush=True)
+        for i in range(M):
+            controllers[i].cov_ctrl = W*np.eye(m)
+            controllers[i].cov_dyn = W*np.eye(n)
         costs_lr = []
         costs_admm = []
         costs_admmQ = []
@@ -83,7 +86,7 @@ if __name__ == "__main__":
 
         for seed in seed_range:
             for i in range(M):
-                print(i, end=", ")
+                print(i, end=", ", flush=True)
                 cont = controllers[i]
                 xs, us, metadata = cont.simulate(x0, N, seed=seed, add_noise=True)
                 # plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
@@ -133,25 +136,25 @@ if __name__ == "__main__":
         costs_fedadmmQR_vsN.append(np.nanmean(costs_fedadmmQR))
         std_costs_fedadmmQR_vsN.append(np.nanstd(costs_fedadmmQR))
         print("| %3.3f | %3.3f | %3.3f | %3.3f" % (costs_lr_vsN[-1], costs_admm_vsN[-1], costs_fedadmmK_vsN[-1],
-              costs_fedadmmQR_vsN[-1]))
+              costs_fedadmmQR_vsN[-1]), flush=True)
 
-        np.save("costs_lr_vsN.npy", costs_lr_vsN)
-        np.save("costs_admm_vsN.npy", costs_admm_vsN)
-        np.save("costs_fedadmmK_vsN.npy", costs_fedadmmK_vsN)
-        np.save("costs_fedadmmQR_vsN.npy", costs_fedadmmQR_vsN)
-        np.save("std_costs_lr_vsN.npy", std_costs_lr_vsN)
-        np.save("std_costs_admm_vsN.npy", std_costs_admm_vsN)
-        np.save("std_costs_fedadmmK_vsN.npy", std_costs_fedadmmK_vsN)
-        np.save("std_costs_fedadmmQR_vsN.npy", std_costs_fedadmmQR_vsN)
+        np.save("costs_lr_vsW.npy", costs_lr_vsN)
+        np.save("costs_admm_vsW.npy", costs_admm_vsN)
+        np.save("costs_fedadmmK_vsW.npy", costs_fedadmmK_vsN)
+        np.save("costs_fedadmmQR_vsW.npy", costs_fedadmmQR_vsN)
+        np.save("std_costs_lr_vsW.npy", std_costs_lr_vsN)
+        np.save("std_costs_admm_vsW.npy", std_costs_admm_vsN)
+        np.save("std_costs_fedadmmK_vsW.npy", std_costs_fedadmmK_vsN)
+        np.save("std_costs_fedadmmQR_vsW.npy", std_costs_fedadmmQR_vsN)
 
     # print(costs_lr)
     # print(costs_admm)
     # print(costs_admmQ)
     # print(costs_admmR)
-    # plt.plot(N_range, costs_lr_vsN, label="Policy Learning")
-    # plt.plot(N_range, costs_admm_vsN, label="ADMM")
-    # plt.plot(N_range, costs_fedadmmK_vsN, label="FedADMM on K")
-    # plt.plot(N_range, costs_fedadmmQR_vsN, label="FedADMM on QR")
+    # plt.plot(W_range, costs_lr_vsN, label="Policy Learning")
+    # plt.plot(W_range, costs_admm_vsN, label="ADMM")
+    # plt.plot(W_range, costs_fedadmmK_vsN, label="FedADMM on K")
+    # plt.plot(W_range, costs_fedadmmQR_vsN, label="FedADMM on QR")
 
     costs_lr_vsN = np.array(costs_lr_vsN)
     std_costs_lr_vsN = np.array(std_costs_lr_vsN)
@@ -162,33 +165,33 @@ if __name__ == "__main__":
     costs_fedadmmQR_vsN = np.array(costs_fedadmmQR_vsN)
     std_costs_fedadmmQR_vsN = np.array(std_costs_fedadmmQR_vsN)
 
-    plt.axhline(cost_noisy, ls='--', c='k', label='Optimal (no noise)')
-    plt.axhline(cost_true, ls='-', c='k', label='Optimal (with noise)')
-    plt.scatter(N_range, costs_lr_vsN, s=4, marker='o', c='cyan', label='policy fitting')
-    plt.fill_between(N_range, costs_lr_vsN - std_costs_lr_vsN/3, costs_lr_vsN + std_costs_lr_vsN/3, alpha=.5,
+    # plt.axhline(cost_noisy, ls='--', c='k', label='expert')
+    # plt.axhline(cost_true, ls='-', c='k', label='optimal')
+    plt.scatter(W_range, costs_lr_vsN, s=4, marker='o', c='cyan', label='policy fitting')
+    plt.fill_between(W_range, costs_lr_vsN - std_costs_lr_vsN/3, costs_lr_vsN + std_costs_lr_vsN/3, alpha=.5,
                      color='cyan')
-    plt.scatter(N_range, costs_admm_vsN, s=4, marker='o', c='green', label='ADMM')
-    plt.fill_between(N_range, costs_admm_vsN - std_costs_admm_vsN/3, costs_admm_vsN + std_costs_admm_vsN/3,
+    plt.scatter(W_range, costs_admm_vsN, s=4, marker='o', c='green', label='ADMM')
+    plt.fill_between(W_range, costs_admm_vsN - std_costs_admm_vsN/3, costs_admm_vsN + std_costs_admm_vsN/3,
                      alpha=.5, color='green')
-    plt.scatter(N_range, costs_fedadmmK_vsN, s=4, marker='o', c='red', label='FedADMM on K')
-    plt.fill_between(N_range, costs_fedadmmK_vsN - std_costs_fedadmmK_vsN/3, costs_fedadmmK_vsN + std_costs_fedadmmK_vsN/3,
+    plt.scatter(W_range, costs_fedadmmK_vsN, s=4, marker='o', c='red', label='FedADMM on K')
+    plt.fill_between(W_range, costs_fedadmmK_vsN - std_costs_fedadmmK_vsN/3, costs_fedadmmK_vsN + std_costs_fedadmmK_vsN/3,
                      alpha=.5, color='red')
-    plt.scatter(N_range, costs_fedadmmQR_vsN, s=4, marker='o', c='purple', label='FedADMM on Q, R')
-    plt.fill_between(N_range, costs_fedadmmQR_vsN - std_costs_fedadmmQR_vsN/3, costs_fedadmmQR_vsN + std_costs_fedadmmQR_vsN/3,
+    plt.scatter(W_range, costs_fedadmmQR_vsN, s=4, marker='o', c='purple', label='FedADMM on Q, R')
+    plt.fill_between(W_range, costs_fedadmmQR_vsN - std_costs_fedadmmQR_vsN/3, costs_fedadmmQR_vsN + std_costs_fedadmmQR_vsN/3,
                      alpha=.5, color='purple')
 
-    np.save("costs_lr_vsN.npy", costs_lr_vsN)
-    np.save("costs_admm_vsN.npy", costs_admm_vsN)
-    np.save("costs_fedadmmK_vsN.npy", costs_fedadmmK_vsN)
-    np.save("costs_fedadmmQR_vsN.npy", costs_fedadmmQR_vsN)
-    np.save("std_costs_lr_vsN.npy", std_costs_lr_vsN)
-    np.save("std_costs_admm_vsN.npy", std_costs_admm_vsN)
-    np.save("std_costs_fedadmmK_vsN.npy", std_costs_fedadmmK_vsN)
-    np.save("std_costs_fedadmmQR_vsN.npy", std_costs_fedadmmQR_vsN)
+    np.save("costs_lr_vsW.npy", costs_lr_vsN)
+    np.save("costs_admm_vsW.npy", costs_admm_vsN)
+    np.save("costs_fedadmmK_vsW.npy", costs_fedadmmK_vsN)
+    np.save("costs_fedadmmQR_vsW.npy", costs_fedadmmQR_vsN)
+    np.save("std_costs_lr_vsW.npy", std_costs_lr_vsN)
+    np.save("std_costs_admm_vsW.npy", std_costs_admm_vsN)
+    np.save("std_costs_fedadmmK_vsW.npy", std_costs_fedadmmK_vsN)
+    np.save("std_costs_fedadmmQR_vsW.npy", std_costs_fedadmmQR_vsN)
 
     plt.grid(True)
-    plt.xlabel("Trajectory Length N")
+    plt.xlabel("Noise Multiplier k, Noise ~ N(0, kI)")
     plt.ylabel(r'$L(\tau; \theta)$')
-    plt.title('Cost vs. Method, M=' + str(M))
+    plt.title('Cost vs. Method, N=' + str(N) + ', M=' + str(M))
     plt.legend()
     plt.show()

@@ -36,7 +36,11 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
         warnings.warn("Solver MOSEK is not installed, falling back to SCS.")
         solver = cp.SCS
 
-    # Using warm start to hopefully speed up solve times --> need to define K and (P, Q, R) step problems
+    # The matrix formulations as in the paper are DCP compliant but not DPP compliant, which slows down operation
+    # Below is a slight reformulation to make them DPP compliant for faster solving using CVXPY
+    # (the problematic parts are the cp.trace(Ycp.T@M) terms, which involves multiplying a parameter with other
+    # parameters)
+    # More details: https://www.cvxpy.org/tutorial/advanced/index.html#disciplined-parametrized-programming
     # K step
     Kcp_K = cp.Variable((m, n))
     Pcp_K = cp.Parameter((n, n), PSD=True)
@@ -47,8 +51,12 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
         Qcp_K + A.T@Pcp_K@(A + B@Kcp_K) - Pcp_K,
         Rcp_K@Kcp_K + B.T@Pcp_K@(A + B@Kcp_K)
     ])
-    objective_K = cp.Minimize(L(Kcp_K) + r(Kcp_K) + cp.trace(Ycp.T@M_K) + rho/2*cp.sum_squares(M_K))
-    prob_K = cp.Problem(objective_K)
+    M_Ktemp = cp.Variable((n + m, n))
+    objective_K = cp.Minimize(L(Kcp_K) + r(Kcp_K) + cp.trace(Ycp.T@M_Ktemp) + rho/2*cp.sum_squares(M_K))
+    constraint_K = [M_K == M_Ktemp]
+    # print("K step:", objective_K.is_dcp(dpp=True), objective_K.is_dcp(dpp=False))
+    # print("K step:", objective_K.is_dgp(dpp=True), objective_K.is_dgp(dpp=False))
+    prob_K = cp.Problem(objective_K, constraint_K)
 
     # PQR step
     Kcp_PQR = cp.Parameter((m, n))
@@ -59,8 +67,12 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
         Qcp_PQR + A.T@Pcp_PQR@(A + B@Kcp_PQR) - Pcp_PQR,
         Rcp_PQR@Kcp_PQR + B.T@Pcp_PQR@(A + B@Kcp_PQR)
     ])
-    objective_PQR = cp.Minimize(cp.trace(Ycp.T@M_PQR) + rho/2*cp.sum_squares(M_PQR))
-    prob_PQR = cp.Problem(objective_PQR)
+    M_PQRtemp = cp.Variable((n + m, n))
+    objective_PQR = cp.Minimize(cp.trace(Ycp.T@M_PQRtemp) + rho/2*cp.sum_squares(M_PQR))
+    constraint_PQR = [M_PQRtemp == M_PQR]
+    # print("PQR step:", objective_PQR.is_dcp(dpp=True), objective_PQR.is_dcp(dpp=False))
+    # print("PQR step:", objective_PQR.is_dgp(dpp=True), objective_PQR.is_dgp(dpp=False))
+    prob_PQR = cp.Problem(objective_PQR, constraint_PQR)
 
     # Initialize K step parameters
     def rand_initialization(m, n):
