@@ -10,6 +10,20 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="\fedadmm.py">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="\test_fedadmm_vs_niter.py">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="\test_fedadmm_vs_noise.py">
           <value>
             <Attribute>

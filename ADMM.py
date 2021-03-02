@@ -52,7 +52,8 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
         Rcp_K@Kcp_K + B.T@Pcp_K@(A + B@Kcp_K)
     ])
     M_Ktemp = cp.Variable((n + m, n))
-    objective_K = cp.Minimize(L(Kcp_K) + r(Kcp_K) + cp.trace(Ycp.T@M_Ktemp) + rho/2*cp.sum_squares(M_K))
+    objective_K = cp.Minimize(L(Kcp_K, Qcp_K, Rcp_K) + r(Kcp_K, Qcp_K, Rcp_K) + cp.trace(Ycp.T@M_Ktemp) +
+                              rho/2*cp.sum_squares(M_K))
     constraint_K = [M_K == M_Ktemp]
     # print("K step:", objective_K.is_dcp(dpp=True), objective_K.is_dcp(dpp=False))
     # print("K step:", objective_K.is_dgp(dpp=True), objective_K.is_dgp(dpp=False))
@@ -68,7 +69,8 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
         Rcp_PQR@Kcp_PQR + B.T@Pcp_PQR@(A + B@Kcp_PQR)
     ])
     M_PQRtemp = cp.Variable((n + m, n))
-    objective_PQR = cp.Minimize(cp.trace(Ycp.T@M_PQRtemp) + rho/2*cp.sum_squares(M_PQR))
+    objective_PQR = cp.Minimize(L(Kcp_K, Qcp_K, Rcp_K) + r(Kcp_K, Qcp_K, Rcp_K) + cp.trace(Ycp.T@M_PQRtemp) + \
+                                rho/2*cp.sum_squares(M_PQR))
     constraint_PQR = [M_PQRtemp == M_PQR]
     # print("PQR step:", objective_PQR.is_dcp(dpp=True), objective_PQR.is_dcp(dpp=False))
     # print("PQR step:", objective_PQR.is_dgp(dpp=True), objective_PQR.is_dgp(dpp=False))
@@ -79,6 +81,7 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
         A = 1./np.sqrt(n)*np.random.randn(n, n)
         return A.T@A
         # return (A + A.T)/2
+
     Pcp_K.value = rand_initialization(n, n) if P0 is None else P0
     Qcp_K.value = rand_initialization(n, n) if Q0 is None else Q0
     Rcp_K.value = rand_initialization(m, m) if R0 is None else R0
@@ -109,7 +112,7 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
     return Kcp_K.value, Pcp_PQR.value, Qcp_PQR.value, Rcp_PQR.value
 
 
-def policy_fitting(L, r, xs, us):
+def policy_fitting(L, r, xs, us, Q, R):
     """
     Traditional policy fitting (no ADMM)
     :param L: L(K), Loss function
@@ -121,8 +124,9 @@ def policy_fitting(L, r, xs, us):
     n = xs.shape[1]
     m = us.shape[1]
     Kcp = cp.Variable((m, n))
-    cp.Problem(cp.Minimize(L(Kcp) + r(Kcp))).solve()
+    cp.Problem(cp.Minimize(L(Kcp, Q, R) + r(Kcp, Q, R))).solve()
     return Kcp.value
+
 
 def policy_fitting_with_kalman_constraint(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
     """

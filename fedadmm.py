@@ -27,20 +27,20 @@ def initialize_LQR(n, m, VQ, VR, cacheAB=True):
 
     Q = np.reshape(wishart.rvs(n*n, VQ), (n, n))
     R = np.reshape(wishart.rvs(m*m, VR), (m, m))
-    cov_dyn = .5*n*n*VQ
-    cov_ctrl = .5*m*m*VR
+    cov_dyn = n*n*VQ
+    cov_ctrl = m*m*VR
     return LQR(A, B, Q, R, cov_dyn, cov_ctrl)
 
 
 if __name__ == "__main__":
     n, m = 4, 2  # n = dimension of state space, m = # of inputs
-    N = 10  # trajectory length
-    M = 2  # number of robots
-    Ntraj = 2  # number of trajectories we sample from each robot
-    VQ = np.eye(n)/n/n  # covariance of Wishart distribution of Q
-    VR = np.eye(m)/m/m  # covariance of Wishart distribution of R
-    # x0 = np.random.randint(100, size=(n, 1))
-    x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
+    N = 5  # trajectory length
+    M = 3  # number of robots
+    Ntraj = 3  # number of trajectories we sample from each robot
+    VQ = np.eye(n)#/n/n  # covariance of Wishart distribution of Q
+    VR = np.eye(m)#/m/m  # covariance of Wishart distribution of R
+    x0 = np.random.randint(100, size=(n, 1))
+    # x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
 
     # Generate controllers
     controllers = []
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     print("Mean and Std of Q's:", np.mean(deviation_Q), np.std(deviation_Q))
     print("Mean and Std of R's:", np.mean(deviation_R), np.std(deviation_R))
 
-    N_test = 1000
+    N_test = 10000
     cost_true = np.mean([cont.simulate(x0, N, add_noise=False)[2][1] for cont in controllers], axis=0)
     cost_noisy = np.mean([cont.simulate(x0, N, add_noise=True)[2][1] for cont in controllers], axis=0)
     print("Cost true: {}, cost noisy: {}".format(cost_true, cost_noisy))
@@ -80,8 +80,10 @@ if __name__ == "__main__":
     # lossK_fedadmmK_vsN, std_lossK_fedadmmK_vsN = [], []
     lossK_fedadmmQR_vsN, lossQ_fedadmmQR_vsN, lossR_fedadmmQR_vsN = [], [], []
     std_lossK_fedadmmQR_vsN, std_lossQ_fedadmmQR_vsN, std_lossR_fedadmmQR_vsN = [], [], []
-    traj_range = range(1, Ntraj + 1)
 
+    out_admm_aggregate = []
+
+    traj_range = range(1, Ntraj + 1)
     # Assume one seed (different for sampling and testing?)
     seed_range = np.arange(1, 3)
     seed = 1
@@ -97,7 +99,6 @@ if __name__ == "__main__":
         out_admm = []
         # out_fedaddmmK = []
         out_fedadmmQR = []
-        out_admm_aggregate = []
 
         # lossQ_lr, lossR_lr = [], []
         lossK_lr = []
@@ -108,44 +109,64 @@ if __name__ == "__main__":
 
         # Get previous PQR as a starter for ADMM
         if traj > 1:
-            prevP, prevQ, prevR = out_admm_aggregate[-1][1:4]
+            prevP, prevQ, prevR = out_admm_aggregate[-1][1:]
         else:
             prevP, prevQ, prevR = None, None, None
 
         for m in range(M):
             print(m, end=", ", flush=True)
             cont = controllers[m]
-            xs, us, metadata = cont.simulate(x0, N, seed=seed, add_noise=True)
-            # plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
+            xs, us, metadata = cont.simulate(x0, N, seed=np.random.randint(0, 1e6), add_noise=True)
+            if traj == 1:
+                plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
 
-            L = lambda K: sum(cp.sum_squares(K@x - u) for x, u in zip(xs, us))
-            r = lambda K: 0.01*cp.sum_squares(K)
+            L = lambda K, Q, R: sum(cp.sum_squares(K@x - u) for x, u in zip(xs, us))
+            r = lambda K, Q, R: 0.01*cp.sum_squares(K)
             LK = lambda K: np.linalg.norm(K - cont.getK())
             LQ = lambda Q: np.linalg.norm(Q - cont.Q)
             LR = lambda R: np.linalg.norm(R - cont.R)
 
-            Klr = policy_fitting(L, r, xs, us)
+            Klr = policy_fitting(L, r, xs, us, cont.Q, cont.R)
             out_lr.append(Klr)
             lossK_lr.append(LK(Klr))
 
-            Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B)
+            Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B, niter=25)
             out_admm.append((traj, m, Kadmm, Padmm, Qadmm, Radmm))
             lossK_admm.append(LK(Kadmm))
             lossQ_admm.append(LQ(Qadmm))
             lossR_admm.append(LR(Radmm))
 
-            KfedadmmQR, PfedadmmQR, QfedadmmQR, RfedadmmQR = \
-                policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B, P0=prevP, Q0=prevQ, R0=prevR)
+            def Lfed(K, Q, R):
+                # print(prevQ, prevR)
+                # print(sum([cp.sum_squares(K@x - u) for x, u in zip(xs, us)]))
+                # print(cp.sum_squares(Q - prevQ))
+                # print(cp.sum_squares(R - prevR))
+                # print()
+                return sum([cp.sum_squares(K@x - u) for x, u in zip(xs, us)]) + cp.sum_squares(Q - cont.Q) + \
+                       cp.sum_squares(R - cont.R)
+            if traj == 1:
+                KfedadmmQR, PfedadmmQR, QfedadmmQR, RfedadmmQR = \
+                    policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B, P0=prevP, Q0=prevQ, R0=prevR,
+                                                          niter=25)
+            else:
+                KfedadmmQR, PfedadmmQR, QfedadmmQR, RfedadmmQR = \
+                    policy_fitting_with_kalman_constraint(Lfed, r, xs, us, cont.A, cont.B, P0=prevP, Q0=prevQ,
+                                                          R0=prevR, niter=25)
+
+            # print(sum([np.linalg.norm(KfedadmmQR@x - u)**2 for x, u in zip(xs, us)]))
+            # if traj > 1:
+            #     print(np.linalg.norm(QfedadmmQR - cont.Q)**2)
+            #     print(np.linalg.norm(RfedadmmQR - cont.R)**2)
             out_fedadmmQR.append((traj, m, KfedadmmQR, PfedadmmQR, QfedadmmQR, RfedadmmQR))
             lossK_fedadmmQR.append(LK(KfedadmmQR))
             lossQ_fedadmmQR.append(LQ(QfedadmmQR))
             lossR_fedadmmQR.append(LR(RfedadmmQR))
 
             for _ in range(100):  # For a little added robustness in the cost measurement
-                cost_lr = cont.simulate(x0, N, K=Klr, seed=0, add_noise=True)[2][1]
-                xs, us, metadata = cont.simulate(x0, N, Q=Qadmm, R=Radmm, seed=0, add_noise=True)
-                cost_admm = metadata[1]
-                cost_fedadmmQR = cont.simulate(x0, N, Q=QfedadmmQR, R=RfedadmmQR, seed=0, add_noise=True)
+                seed = np.random.randint(0, 1e6)
+                cost_lr = cont.simulate(x0, N, K=Klr, seed=seed, add_noise=True)[2][1]
+                cost_admm = cont.simulate(x0, N, Q=Qadmm, R=Radmm, seed=seed, add_noise=True)[2][1]
+                cost_fedadmmQR = cont.simulate(x0, N, Q=QfedadmmQR, R=RfedadmmQR, seed=seed, add_noise=True)[2][1]
                 if np.isnan(cost_lr) or cost_lr > 1e4 or cost_lr == np.inf:
                     cost_lr = np.nan
                 # Add the above costs to a list of costs
@@ -153,10 +174,10 @@ if __name__ == "__main__":
                 costs_admm.append(cost_admm)
                 costs_fedadmmQR.append(cost_fedadmmQR)
 
-        Kavg = sum([K for K, P, Q, R in out_admm])/len(out_admm)
-        Pavg = sum([P for K, P, Q, R in out_admm])/len(out_admm)
-        Qavg = sum([Q for K, P, Q, R in out_admm])/len(out_admm)
-        Ravg = sum([R for K, P, Q, R in out_admm])/len(out_admm)
+        Kavg = sum([K for _, _, K, P, Q, R in out_fedadmmQR[-M:]])/M
+        Pavg = sum([P for _, _, K, P, Q, R in out_fedadmmQR[-M:]])/M
+        Qavg = sum([Q for _, _, K, P, Q, R in out_fedadmmQR[-M:]])/M
+        Ravg = sum([R for _, _, K, P, Q, R in out_fedadmmQR[-M:]])/M
         # out_fedaddmmK.append((traj, Kavg))
         out_admm_aggregate.append((traj, Pavg, Qavg, Ravg))
 
@@ -200,12 +221,16 @@ if __name__ == "__main__":
 
         lossK_fedadmmQR_vsN.append(np.nanmean(lossK_fedadmmQR))
         std_lossK_fedadmmQR_vsN.append(np.nanstd(lossK_fedadmmQR))
+        print(lossQ_fedadmmQR, np.nanmean(lossQ_fedadmmQR), np.nanstd(lossQ_fedadmmQR))
         lossQ_fedadmmQR_vsN.append(np.nanmean(lossQ_fedadmmQR))
         std_lossQ_fedadmmQR_vsN.append(np.nanstd(lossQ_fedadmmQR))
         lossR_fedadmmQR_vsN.append(np.nanmean(lossR_fedadmmQR))
         std_lossR_fedadmmQR_vsN.append(np.nanstd(lossR_fedadmmQR))
 
-        print("| %3.3f | %3.3f | %3.3f"%(costs_lr_vsN[-1], costs_admm_vsN[-1], costs_fedadmmQR_vsN[-1]), flush=True)
+        print("| %3.3f | %3.3f | %3.3f, Losses: K_lr: %3.3f, (KQR)_admm: %3.3f | %3.3f | %3.3f, (KQR)_fedadmm: %3.3f | %3.3f | %3.3f"%(
+            costs_lr_vsN[-1], costs_admm_vsN[-1], costs_fedadmmQR_vsN[-1],
+            lossK_lr_vsN[-1], lossK_admm_vsN[-1], lossQ_admm_vsN[-1], lossR_admm_vsN[-1],
+            lossK_fedadmmQR_vsN[-1], lossQ_fedadmmQR_vsN[-1], lossR_fedadmmQR_vsN[-1]), flush=True)
 
         np.save(timestamp + "_fedadmm.npy", [costs_lr_vsN, std_costs_lr_vsN,
                                              costs_admm_vsN, std_costs_admm_vsN,
@@ -221,6 +246,12 @@ if __name__ == "__main__":
         # np.save(timestamp + "std_costs_admm_vsW.npy", std_costs_admm_vsN)
         # # np.save(timestamp + "std_costs_fedadmmK_vsW.npy", std_costs_fedadmmK_vsN)
         # np.save(timestamp + "std_costs_fedadmmQR_vsW.npy", std_costs_fedadmmQR_vsN)
+
+        if traj == 1:
+            plt.xlabel("t")
+            plt.ylabel("x")
+            plt.title("Trajectories")
+            plt.show()
 
     # print(costs_lr)
     # print(costs_admm)
@@ -259,21 +290,68 @@ if __name__ == "__main__":
     std_lossR_fedadmmQR_vsN = np.array(std_lossR_fedadmmQR_vsN)
 
     # Plot
-    # plt.axhline(cost_noisy, ls='--', c='k', label='expert')
-    # plt.axhline(cost_true, ls='-', c='k', label='optimal')
-    plt.scatter(traj_range, costs_lr_vsN, s=4, marker='o', c='cyan', label='policy fitting')
-    plt.fill_between(traj_range, costs_lr_vsN - std_costs_lr_vsN/3, costs_lr_vsN + std_costs_lr_vsN/3, alpha=.5,
-                     color='cyan')
-    plt.scatter(traj_range, costs_admm_vsN, s=4, marker='o', c='green', label='ADMM')
-    plt.fill_between(traj_range, costs_admm_vsN - std_costs_admm_vsN/3, costs_admm_vsN + std_costs_admm_vsN/3,
-                     alpha=.5, color='green')
+    fig, axs = plt.subplots(2, 2)
+    axs[0, 0].axhline(cost_noisy, ls='--', c='k', label='expert (with noise)')
+    axs[0, 0].axhline(cost_true, ls='-', c='k', label='optimal (without noise)')
+    axs[0, 0].scatter(traj_range, costs_lr_vsN, s=4, marker='o', c='cyan', label='policy fitting')
+    axs[0, 0].fill_between(traj_range, costs_lr_vsN - std_costs_lr_vsN/3, costs_lr_vsN + std_costs_lr_vsN/3, alpha=.5,
+                           color='cyan')
+    axs[0, 0].scatter(traj_range, costs_admm_vsN, s=4, marker='o', c='green', label='ADMM')
+    axs[0, 0].fill_between(traj_range, costs_admm_vsN - std_costs_admm_vsN/3, costs_admm_vsN + std_costs_admm_vsN/3,
+                           alpha=.5, color='green')
     # plt.scatter(traj_range, costs_fedadmmK_vsN, s=4, marker='o', c='red', label='FedADMM on K')
     # plt.fill_between(traj_range, costs_fedadmmK_vsN - std_costs_fedadmmK_vsN/3, costs_fedadmmK_vsN + std_costs_fedadmmK_vsN/3,
     #                  alpha=.5, color='red')
-    plt.scatter(traj_range, costs_fedadmmQR_vsN, s=4, marker='o', c='purple', label='FedADMM on Q, R')
-    plt.fill_between(traj_range, costs_fedadmmQR_vsN - std_costs_fedadmmQR_vsN/3,
-                     costs_fedadmmQR_vsN + std_costs_fedadmmQR_vsN/3,
-                     alpha=.5, color='purple')
+    axs[0, 0].scatter(traj_range, costs_fedadmmQR_vsN, s=4, marker='o', c='purple', label='FedADMM on Q, R')
+    axs[0, 0].fill_between(traj_range, costs_fedadmmQR_vsN - std_costs_fedadmmQR_vsN/3,
+                           costs_fedadmmQR_vsN + std_costs_fedadmmQR_vsN/3,
+                           alpha=.5, color='purple')
+    axs[0, 0].grid(True)
+    axs[0, 0].set_xlabel(r"Trajectory Number \tau")
+    axs[0, 0].set_ylabel(r'$L(\tau; \theta)$')
+    axs[0, 0].set_title('Cost vs. Method, N=' + str(N) + ', M=' + str(M))
+
+    # Plot K
+    axs[1, 0].scatter(traj_range, lossK_lr_vsN, s=4, marker='o', c='cyan', label='policy fitting')
+    axs[1, 0].fill_between(traj_range, lossK_lr_vsN - std_lossK_lr_vsN/3, lossK_lr_vsN + std_lossK_lr_vsN/3, alpha=.5,
+                           color='cyan')
+    axs[1, 0].scatter(traj_range, lossK_admm_vsN, s=4, marker='o', c='green', label='ADMM')
+    axs[1, 0].fill_between(traj_range, lossK_admm_vsN - std_lossK_admm_vsN/3, lossK_admm_vsN + std_lossK_admm_vsN/3,
+                           alpha=.5, color='green')
+    axs[1, 0].scatter(traj_range, lossK_fedadmmQR_vsN, s=4, marker='o', c='purple', label='FedADMM on Q, R')
+    axs[1, 0].fill_between(traj_range, lossK_fedadmmQR_vsN - std_lossK_fedadmmQR_vsN/3,
+                           lossK_fedadmmQR_vsN + std_lossK_fedadmmQR_vsN/3,
+                           alpha=.5, color='purple')
+    axs[1, 0].grid(True)
+    axs[1, 0].set_xlabel(r"Trajectory Number $\tau$")
+    axs[1, 0].set_ylabel(r'$||K - K_{true}||$')
+    axs[1, 0].set_title('K Loss, N=' + str(N) + ', M=' + str(M))
+
+    # Plot Q Loss
+    axs[0, 1].scatter(traj_range, lossQ_admm_vsN, s=4, marker='o', c='green', label='ADMM')
+    axs[0, 1].fill_between(traj_range, lossQ_admm_vsN - std_lossQ_admm_vsN/3, lossQ_admm_vsN + std_lossQ_admm_vsN/3,
+                           alpha=.5, color='green')
+    axs[0, 1].scatter(traj_range, lossQ_fedadmmQR_vsN, s=4, marker='o', c='purple', label='FedADMM on Q, R')
+    axs[0, 1].fill_between(traj_range, lossQ_fedadmmQR_vsN - std_lossQ_fedadmmQR_vsN/3,
+                           lossQ_fedadmmQR_vsN + std_lossQ_fedadmmQR_vsN/3,
+                           alpha=.5, color='purple')
+    axs[0, 1].grid(True)
+    axs[0, 1].set_xlabel(r'Trajectory Number $\tau$')
+    axs[0, 1].set_ylabel(r'$||Q - Q_{true}||$')
+    axs[0, 1].set_title('Q Loss, N=' + str(N) + ', M=' + str(M))
+
+    # Plot R Loss
+    axs[1, 1].scatter(traj_range, lossR_admm_vsN, s=4, marker='o', c='green', label='ADMM')
+    axs[1, 1].fill_between(traj_range, lossR_admm_vsN - std_lossR_admm_vsN/3, lossR_admm_vsN + std_lossR_admm_vsN/3,
+                           alpha=.5, color='green')
+    axs[1, 1].scatter(traj_range, lossR_fedadmmQR_vsN, s=4, marker='o', c='purple', label='FedADMM on Q, R')
+    axs[1, 1].fill_between(traj_range, lossR_fedadmmQR_vsN - std_lossR_fedadmmQR_vsN/3,
+                           lossR_fedadmmQR_vsN + std_lossR_fedadmmQR_vsN/3,
+                           alpha=.5, color='purple')
+    axs[1, 1].grid(True)
+    axs[1, 1].set_xlabel(r'Trajectory Number $\tau$')
+    axs[1, 1].set_ylabel(r'$||Q - Q_{true}||$')
+    axs[1, 1].set_title('R Loss, N=' + str(N) + ', M=' + str(M))
 
     np.save(timestamp + "_fedadmm.npy", [costs_lr_vsN, std_costs_lr_vsN,
                                          costs_admm_vsN, std_costs_admm_vsN,
@@ -294,9 +372,5 @@ if __name__ == "__main__":
     # # np.save(timestamp + "std_costs_fedadmmK_vsW.npy", std_costs_fedadmmK_vsN)
     # np.save(timestamp + "std_costs_fedadmmQR_vsW.npy", std_costs_fedadmmQR_vsN)
 
-    plt.grid(True)
-    plt.xlabel("Noise Multiplier k, Noise ~ N(0, kI)")
-    plt.ylabel(r'$L(\tau; \theta)$')
-    plt.title('Cost vs. Method, N=' + str(N) + ', M=' + str(M))
     plt.legend()
     plt.show()
