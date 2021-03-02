@@ -28,20 +28,19 @@ def initialize_LQR(n, m, VQ, VR, cacheAB=True):
 
     Q = np.reshape(wishart.rvs(n*n, VQ), (n, n))
     R = np.reshape(wishart.rvs(m*m, VR), (m, m))
-    cov_dyn = .5*n*n*VQ
-    cov_ctrl = .5*m*m*VR
+    cov_dyn = 5*n*n*VQ
+    cov_ctrl = 5*m*m*VR
     return LQR(A, B, Q, R, cov_dyn, cov_ctrl)
 
 
 if __name__ == "__main__":
     n, m = 4, 2  # n = dimension of state space, m = # of inputs
     N = 10  # trajectory length
-    M = 10  # number of robots
+    M = 40  # number of robots
     Ntraj = 1  # number of trajectories we sample from each robot
     VQ = np.eye(n)/n/n  # covariance of Wishart distribution of Q
     VR = np.eye(m)/m/m  # covariance of Wishart distribution of R
-    # x0 = np.random.randint(100, size=(n, 1))
-    x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
+    # x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
 
     # Generate controllers
     controllers = []
@@ -65,6 +64,8 @@ if __name__ == "__main__":
     timestamp = now.strftime("%Y%m%d_%H_%M_%S")
 
     N_test = 1000
+    # x0 = np.random.randint(100, size=(n, 1))
+    x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
     cost_true = np.mean([cont.simulate(x0, N, add_noise=False)[2][1] for cont in controllers], axis=0)
     cost_noisy = np.mean([cont.simulate(x0, N, add_noise=True)[2][1] for cont in controllers], axis=0)
     print("Cost true: {}, cost noisy: {}".format(cost_true, cost_noisy))
@@ -75,7 +76,7 @@ if __name__ == "__main__":
     costs_fedadmmK_vsN, std_costs_fedadmmK_vsN = [], []
     costs_fedadmmQR_vsN, std_costs_fedadmmQR_vsN = [], []
     niter_range = np.arange(1, 102, 5)
-    seed_range = np.arange(1, 4)
+    # seed_range = np.arange(1, 4)
 
     times = []
     for niter in niter_range:
@@ -90,57 +91,67 @@ if __name__ == "__main__":
         costs_fedadmmK = []
         costs_fedadmmQR = []
 
-        for seed in seed_range:
-            for i in range(M):
-                print(i, end=", ", flush=True)
-                cont = controllers[i]
-                xs, us, metadata = cont.simulate(x0, N, seed=seed, add_noise=True)
-                plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
+        seed = np.random.randint(0, 1e6)
+        for i in range(M):
+            print(i, end=", ", flush=True)
+            cont = controllers[i]
+            # x0 = np.random.randint(100, size=(n, 1))
+            x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
+            xs, us, metadata = cont.simulate(x0, N, seed=np.random.randint(0, 1e6), add_noise=True)
+            plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
 
-                L = lambda K, Q, R: sum(cp.sum_squares(K@x - u) for x, u in zip(xs, us))
-                r = lambda K, Q, R: 0.01*cp.sum_squares(K)
-                LQ = lambda Q: np.linalg.norm(Q - cont.Q)
-                LR = lambda R: np.linalg.norm(R - cont.R)
+            def L(K, Q, R):
+                sum([cp.sum_squares(K@x - u) for x, u in zip(xs, us)])
+            r = lambda K, Q, R: 0.01*cp.sum_squares(K)
+            LQ = lambda Q: np.linalg.norm(Q - cont.Q)
+            LR = lambda R: np.linalg.norm(R - cont.R)
 
-                # temp_start_time = time.time()
-                Klr = policy_fitting(L, r, xs, us, cont.Q, cont.R)
-                # print("Time elapsed after LR: ", time.time() - temp_start_time)
-                out_lr.append(Klr)
-                # temp_start_time = time.time()
-                Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B,
-                                                                                   niter=100)
-                # print("Time elapsed after ADMM: ", time.time() - temp_start_time)
-                out_admm.append((niter, i, Kadmm, Padmm, Qadmm, Radmm))
+            # temp_start_time = time.time()
+            Klr = policy_fitting(L, r, xs, us, cont.Q, cont.R)
+            # print("Time elapsed after LR: ", time.time() - temp_start_time)
+            out_lr.append(Klr)
+            # temp_start_time = time.time()
+            Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B,
+                                                                               niter=niter)
+            # print("Time elapsed after ADMM: ", time.time() - temp_start_time)
+            out_admm.append((niter, i, Kadmm, Padmm, Qadmm, Radmm))
 
-                for _ in range(100):  # For a little added robustness in the cost measurement
-                    cost_lr = cont.simulate(x0, N, K=Klr, seed=0, add_noise=True)[2][1]
-                    xs, us, metadata = cont.simulate(x0, N, Q=Qadmm, R=Radmm, seed=0, add_noise=True)
-                    cost_admm = metadata[1]
-                    if np.isnan(cost_lr) or cost_lr > 1e5 or cost_lr == np.inf:
-                        cost_lr = np.nan
+            for _ in range(100):  # For a little added robustness in the cost measurement
+                cost_lr = cont.simulate(x0, N, K=Klr, seed=seed, add_noise=True)[2][1]
+                if np.linalg.norm(Qadmm) == np.inf:
+                    cost_admm = np.nan
+                    print("Failed ADMM solve")
+                else:
+                    cost_admm = cont.simulate(x0, N, Q=Qadmm, R=Radmm, seed=seed, add_noise=True)[2][1]
+                if np.isnan(cost_lr) or cost_lr > 1e5 or cost_lr == np.inf:
+                    cost_lr = np.nan
+                if np.isnan(cost_admm) or cost_admm > 1e5 or cost_admm == np.inf:
+                    cost_admm = np.nan
 
-                    costs_lr.append(cost_lr)
-                    costs_admm.append(cost_admm)
-                    costs_admmQ.append(LQ(Qadmm))
-                    costs_admmR.append(LR(Radmm))
+                costs_lr.append(cost_lr)
+                costs_admm.append(cost_admm)
+                costs_admmQ.append(LQ(Qadmm))
+                costs_admmR.append(LR(Radmm))
 
-                # plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Qadmm={}, Radmm={}".format(Qadmm[0, 0], Radmm[0, 0]))
+            # plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Qadmm={}, Radmm={}".format(Qadmm[0, 0], Radmm[0, 0]))
 
-            Kavg = sum([K for _, _, K, P, Q, R in out_admm[-M:]])/M
-            Pavg = sum([P for _, _, K, P, Q, R in out_admm[-M:]])/M
-            Qavg = sum([Q for _, _, K, P, Q, R in out_admm[-M:]])/M
-            Ravg = sum([R for _, _, K, P, Q, R in out_admm[-M:]])/M
+        Kavg = np.nanmean([K for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
+        Pavg = np.nanmean([P for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
+        Qavg = np.nanmean([Q for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
+        Ravg = np.nanmean([R for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
 
-            for i in range(M):
-                cont = controllers[i]
-                for _ in range(100):
-                    cost_fedadmmK = cont.simulate(x0, N, K=Kavg, seed=0, add_noise=True)[2][1]
-                    cost_fedadmmQR = cont.simulate(x0, N, Q=Qavg, R=Ravg, seed=0, add_noise=True)[2][1]
-                    costs_fedadmmK.append(cost_fedadmmK)
-                    costs_fedadmmQR.append(cost_fedadmmQR)
+        for i in range(M):
+            cont = controllers[i]
+            for _ in range(100):
+                # x0 = np.random.randint(100, size=(n, 1))
+                x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
+                cost_fedadmmK = cont.simulate(x0, N, K=Kavg, seed=seed, add_noise=True)[2][1]
+                cost_fedadmmQR = cont.simulate(x0, N, Q=Qavg, R=Ravg, seed=seed, add_noise=True)[2][1]
+                costs_fedadmmK.append(cost_fedadmmK)
+                costs_fedadmmQR.append(cost_fedadmmQR)
 
         end_time = time.time()
-        times.append((end_time - start_time)/len(seed_range)/M)
+        times.append((end_time - start_time)/M)
 
         costs_lr_vsN.append(np.nanmean(costs_lr))
         std_costs_lr_vsN.append(np.nanstd(costs_lr))
@@ -164,10 +175,10 @@ if __name__ == "__main__":
         # np.save("std_costs_admm_vsW.npy", std_costs_admm_vsN)
         # np.save("std_costs_fedadmmK_vsW.npy", std_costs_fedadmmK_vsN)
         # np.save("std_costs_fedadmmQR_vsW.npy", std_costs_fedadmmQR_vsN)
-        np.save(timestamp + "_test_fedadmm_vs_noise.npy", [costs_lr_vsN, std_costs_lr_vsN,
-                                                           costs_admm_vsN, std_costs_admm_vsN,
-                                                           costs_fedadmmK_vsN, std_costs_fedadmmK_vsN,
-                                                           costs_fedadmmQR_vsN, std_costs_fedadmmQR_vsN])
+        np.save("data/" + timestamp + "_test_fedadmm_vs_niter.npy", [costs_lr_vsN, std_costs_lr_vsN,
+                                                                     costs_admm_vsN, std_costs_admm_vsN,
+                                                                     costs_fedadmmK_vsN, std_costs_fedadmmK_vsN,
+                                                                     costs_fedadmmQR_vsN, std_costs_fedadmmQR_vsN])
 
     # print(costs_lr)
     # print(costs_admm)
@@ -181,7 +192,9 @@ if __name__ == "__main__":
     plt.xlabel("t")
     plt.ylabel("x_0")
     plt.title("Trajectories")
-    plt.show()
+    # plt.show()
+    plt.savefig("figures/" + timestamp + "_fedadmm_vs_noise_trajectories.png")
+    plt.savefig("figures/" + timestamp + "_fedadmm_vs_noise_trajectories.pdf")
 
     costs_lr_vsN = np.array(costs_lr_vsN)
     std_costs_lr_vsN = np.array(std_costs_lr_vsN)
@@ -231,11 +244,13 @@ if __name__ == "__main__":
     # np.save("std_costs_admm_vsW.npy", std_costs_admm_vsN)
     # np.save("std_costs_fedadmmK_vsW.npy", std_costs_fedadmmK_vsN)
     # np.save("std_costs_fedadmmQR_vsW.npy", std_costs_fedadmmQR_vsN)
-    np.save(timestamp + "_test_fedadmm_vs_noise.npy", [costs_lr_vsN, std_costs_lr_vsN,
-                                                       costs_admm_vsN, std_costs_admm_vsN,
-                                                       costs_fedadmmK_vsN, std_costs_fedadmmK_vsN,
-                                                       costs_fedadmmQR_vsN, std_costs_fedadmmQR_vsN])
+    np.save("data/" + timestamp + "_test_fedadmm_vs_niter.npy", [costs_lr_vsN, std_costs_lr_vsN,
+                                                                 costs_admm_vsN, std_costs_admm_vsN,
+                                                                 costs_fedadmmK_vsN, std_costs_fedadmmK_vsN,
+                                                                 costs_fedadmmQR_vsN, std_costs_fedadmmQR_vsN])
 
-    plt.savefig("figures/" + timestamp + "_fedadmm_vs_noise.png")
-    plt.savefig("figures/" + timestamp + "_fedadmm_vs_noise.pdf")
-    plt.show()
+    plt.savefig("figures/" + timestamp + "_fedadmm_vs_niter.png")
+    plt.savefig("figures/" + timestamp + "_fedadmm_vs_niter.pdf")
+
+    print(timestamp)
+    # plt.show()

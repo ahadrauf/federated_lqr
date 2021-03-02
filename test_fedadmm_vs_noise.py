@@ -35,7 +35,7 @@ def initialize_LQR(n, m, VQ, VR, cacheAB=True):
 if __name__ == "__main__":
     n, m = 4, 2  # n = dimension of state space, m = # of inputs
     N = 10  # trajectory length
-    M = 10  # number of robots
+    M = 30  # number of robots
     Ntraj = 1  # number of trajectories we sample from each robot
     VQ = np.eye(n)/n/n  # covariance of Wishart distribution of Q
     VR = np.eye(m)/m/m  # covariance of Wishart distribution of R
@@ -89,50 +89,52 @@ if __name__ == "__main__":
         costs_fedadmmK = []
         costs_fedadmmQR = []
 
-        for seed in seed_range:
-            for i in range(M):
-                print(i, end=", ", flush=True)
-                cont = controllers[i]
-                xs, us, metadata = cont.simulate(x0, N, seed=seed, add_noise=True)
-                # plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
+        for i in range(M):
+            print(i, end=", ", flush=True)
+            cont = controllers[i]
+            xs, us, metadata = cont.simulate(x0, N, seed=np.random.randint(0, 1e6), add_noise=True)
+            # plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
 
-                L = lambda K: sum(cp.sum_squares(K@x - u) for x, u in zip(xs, us))
-                r = lambda K: 0.01*cp.sum_squares(K)
-                LQ = lambda Q: np.linalg.norm(Q - cont.Q)
-                LR = lambda R: np.linalg.norm(R - cont.R)
+            L = lambda K: sum(cp.sum_squares(K@x - u) for x, u in zip(xs, us))
+            r = lambda K: 0.01*cp.sum_squares(K)
+            LQ = lambda Q: np.linalg.norm(Q - cont.Q)
+            LR = lambda R: np.linalg.norm(R - cont.R)
 
-                Klr = policy_fitting(L, r, xs, us)
-                out_lr.append(Klr)
-                Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B,
-                                                                                   niter=100)
-                out_admm.append((W, i, Kadmm, Padmm, Qadmm, Radmm))
+            Klr = policy_fitting(L, r, xs, us)
+            out_lr.append(Klr)
+            Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B,
+                                                                               niter=100)
+            out_admm.append((W, i, Kadmm, Padmm, Qadmm, Radmm))
 
-                for _ in range(100):  # For a little added robustness in the cost measurement
-                    cost_lr = cont.simulate(x0, N, K=Klr, seed=0, add_noise=True)[2][1]
-                    xs, us, metadata = cont.simulate(x0, N, Q=Qadmm, R=Radmm, seed=0, add_noise=True)
-                    cost_admm = metadata[1]
-                    if np.isnan(cost_lr) or cost_lr > 1e5 or cost_lr == np.inf:
-                        cost_lr = np.nan
+            seed = np.random.randint(0, 1e6)
+            for _ in range(100):  # For a little added robustness in the cost measurement
+                cost_lr = cont.simulate(x0, N, K=Klr, seed=seed, add_noise=True)[2][1]
+                xs, us, metadata = cont.simulate(x0, N, Q=Qadmm, R=Radmm, seed=seed, add_noise=True)
+                cost_admm = metadata[1]
+                if np.isnan(cost_lr) or cost_lr > 1e5 or cost_lr == np.inf:
+                    cost_lr = np.nan
+                if np.isnan(cost_admm) or cost_admm > 1e5 or cost_admm == np.inf:
+                    cost_admm = np.nan
 
-                    costs_lr.append(cost_lr)
-                    costs_admm.append(cost_admm)
-                    costs_admmQ.append(LQ(Qadmm))
-                    costs_admmR.append(LR(Radmm))
+                costs_lr.append(cost_lr)
+                costs_admm.append(cost_admm)
+                costs_admmQ.append(LQ(Qadmm))
+                costs_admmR.append(LR(Radmm))
 
-                # plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Qadmm={}, Radmm={}".format(Qadmm[0, 0], Radmm[0, 0]))
+            # plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Qadmm={}, Radmm={}".format(Qadmm[0, 0], Radmm[0, 0]))
 
-            Kavg = sum([K for _, _, K, P, Q, R in out_admm[-M:]])/M
-            Pavg = sum([P for _, _, K, P, Q, R in out_admm[-M:]])/M
-            Qavg = sum([Q for _, _, K, P, Q, R in out_admm[-M:]])/M
-            Ravg = sum([R for _, _, K, P, Q, R in out_admm[-M:]])/M
+        Kavg = np.nanmean([K for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
+        Pavg = np.nanmean([P for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
+        Qavg = np.nanmean([Q for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
+        Ravg = np.nanmean([R for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
 
-            for i in range(M):
-                cont = controllers[i]
-                for _ in range(100):
-                    cost_fedadmmK = cont.simulate(x0, N, K=Kavg, seed=0, add_noise=True)[2][1]
-                    cost_fedadmmQR = cont.simulate(x0, N, Q=Qavg, R=Ravg, seed=0, add_noise=True)[2][1]
-                    costs_fedadmmK.append(cost_fedadmmK)
-                    costs_fedadmmQR.append(cost_fedadmmQR)
+        for i in range(M):
+            cont = controllers[i]
+            for _ in range(100):
+                cost_fedadmmK = cont.simulate(x0, N, K=Kavg, seed=seed, add_noise=True)[2][1]
+                cost_fedadmmQR = cont.simulate(x0, N, Q=Qavg, R=Ravg, seed=seed, add_noise=True)[2][1]
+                costs_fedadmmK.append(cost_fedadmmK)
+                costs_fedadmmQR.append(cost_fedadmmQR)
 
         costs_lr_vsN.append(np.nanmean(costs_lr))
         std_costs_lr_vsN.append(np.nanstd(costs_lr))

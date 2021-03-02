@@ -89,15 +89,34 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
 
     for k in range(niter):
         # K step
-        prob_K.solve(solver=solver)
+        # prob_K.solve(solver=solver)
+        try:
+            prob_K.solve(solver=solver)
+        except:
+            try:
+                warnings.warn("Defaulting to SCS solver for K step")
+                prob_K.solve(solver=cp.SCS, acceleration_lookback=0, max_iters=10000)
+            except:
+                Kinf = np.inf*np.ones((m, n))
+                Pinf = np.inf*np.ones((n, n))
+                Qinf = np.inf*np.ones((n, n))
+                Rinf = np.inf*np.ones((m, m))
+                return Kinf, Pinf, Qinf, Rinf
         Kcp_PQR.value = Kcp_K.value
 
         # P, Q, R step
         try:
             prob_PQR.solve(solver=solver)
         except:
-            warnings.warn("Defaulting to SCS solver for PQR step")
-            prob_PQR.solve(solver=cp.SCS, acceleration_lookback=0, max_iters=10000)
+            try:
+                warnings.warn("Defaulting to SCS solver for PQR step")
+                prob_PQR.solve(solver=cp.SCS, acceleration_lookback=0, max_iters=10000)
+            except:
+                Kinf = np.inf*np.ones((m, n))
+                Pinf = np.inf*np.ones((n, n))
+                Qinf = np.inf*np.ones((n, n))
+                Rinf = np.inf*np.ones((m, m))
+                return Kinf, Pinf, Qinf, Rinf
         Pcp_K.value = Pcp_PQR.value
         Qcp_K.value = Qcp_PQR.value
         Rcp_K.value = Rcp_PQR.value
