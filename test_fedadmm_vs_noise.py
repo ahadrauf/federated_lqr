@@ -98,14 +98,15 @@ if __name__ == "__main__":
 
                 Klr = policy_fitting(L, r, xs, us)
                 out_lr.append(Klr)
-                Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B)
+                Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B,
+                                                                                   niter=20)
                 out_admm.append((Kadmm, Padmm, Qadmm, Radmm))
 
-                for _ in range(3):  # For a little added robustness in the cost measurement
+                for _ in range(100):  # For a little added robustness in the cost measurement
                     cost_lr = cont.simulate(x0, N, K=Klr, seed=0, add_noise=True)[2][1]
                     xs, us, metadata = cont.simulate(x0, N, Q=Qadmm, R=Radmm, seed=0, add_noise=True)
                     cost_admm = metadata[1]
-                    if np.isnan(cost_lr) or cost_lr > 1e6 or cost_lr == np.inf:
+                    if np.isnan(cost_lr) or cost_lr > 1e5 or cost_lr == np.inf:
                         cost_lr = np.nan
 
                     costs_lr.append(cost_lr)
@@ -121,7 +122,7 @@ if __name__ == "__main__":
 
             for i in range(M):
                 cont = controllers[i]
-                for _ in range(3):
+                for _ in range(100):
                     cost_fedadmmK = cont.simulate(x0, N, K=Kavg, seed=0, add_noise=True)[2][1]
                     cost_fedadmmQR = cont.simulate(x0, N, Q=Qavg, R=Ravg, seed=0, add_noise=True)[2][1]
                     costs_fedadmmK.append(cost_fedadmmK)
@@ -173,10 +174,10 @@ if __name__ == "__main__":
     plt.scatter(W_range, costs_admm_vsN, s=4, marker='o', c='green', label='ADMM')
     plt.fill_between(W_range, costs_admm_vsN - std_costs_admm_vsN/3, costs_admm_vsN + std_costs_admm_vsN/3,
                      alpha=.5, color='green')
-    plt.scatter(W_range, costs_fedadmmK_vsN, s=4, marker='o', c='red', label='FedADMM on K')
+    plt.scatter(W_range, costs_fedadmmK_vsN, s=4, marker='o', c='red', label='Average ADMM on K')
     plt.fill_between(W_range, costs_fedadmmK_vsN - std_costs_fedadmmK_vsN/3, costs_fedadmmK_vsN + std_costs_fedadmmK_vsN/3,
                      alpha=.5, color='red')
-    plt.scatter(W_range, costs_fedadmmQR_vsN, s=4, marker='o', c='purple', label='FedADMM on Q, R')
+    plt.scatter(W_range, costs_fedadmmQR_vsN, s=4, marker='o', c='purple', label='Average ADMM on Q, R')
     plt.fill_between(W_range, costs_fedadmmQR_vsN - std_costs_fedadmmQR_vsN/3, costs_fedadmmQR_vsN + std_costs_fedadmmQR_vsN/3,
                      alpha=.5, color='purple')
 

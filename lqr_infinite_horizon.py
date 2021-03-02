@@ -40,9 +40,8 @@ class LQR:
             Q = self.Q
         if R is None:
             R = self.R
-        P = solve_discrete_are(self.A, self.B, Q, R)
         if K is None:
-            K = -inv(R + self.B.T@P@self.B)@self.B.T@P@self.A
+            K = self.getK(Q, R)
 
         xs = [x0]
         us = []
@@ -75,3 +74,12 @@ class LQR:
     def loss_imitation_learning(self, xs, us, xs_true, us_true):
         return np.sum([(x.T - x_true.T)@self.Q@(x.T - x_true) for x, x_true in zip(xs, xs_true)]) \
                + np.sum([(u.T - u_true.T)@self.R@(u.T - u_true) for u, u_true in zip(us, us_true)])
+
+    def getK(self, Q=None, R=None):
+        if Q is None:
+            Q = self.Q
+        if R is None:
+            R = self.R
+        P = solve_discrete_are(self.A, self.B, Q, R)
+        K = -inv(R + self.B.T@P@self.B)@self.B.T@P@self.A
+        return K
