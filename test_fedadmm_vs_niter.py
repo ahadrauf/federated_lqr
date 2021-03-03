@@ -28,15 +28,15 @@ def initialize_LQR(n, m, VQ, VR, cacheAB=True):
 
     Q = np.reshape(wishart.rvs(n*n, VQ), (n, n))
     R = np.reshape(wishart.rvs(m*m, VR), (m, m))
-    cov_dyn = 5*n*n*VQ
-    cov_ctrl = 5*m*m*VR
+    cov_dyn = 0.5*n*n*VQ
+    cov_ctrl = 0.5*m*m*VR
     return LQR(A, B, Q, R, cov_dyn, cov_ctrl)
 
 
 if __name__ == "__main__":
     n, m = 4, 2  # n = dimension of state space, m = # of inputs
     N = 10  # trajectory length
-    M = 40  # number of robots
+    M = 30  # number of robots
     Ntraj = 1  # number of trajectories we sample from each robot
     VQ = np.eye(n)/n/n  # covariance of Wishart distribution of Q
     VR = np.eye(m)/m/m  # covariance of Wishart distribution of R
@@ -49,13 +49,13 @@ if __name__ == "__main__":
         controllers.append(cont)
 
     # Print some stats
-    avgQ = sum([cont.Q for cont in controllers])/M
-    avgR = sum([cont.R for cont in controllers])/M
+    avgQ = np.nanmean([cont.Q for cont in controllers], axis=0)
+    avgR = np.nanmean([cont.R for cont in controllers], axis=0)
     print("Average Q and R vs. Expected")
     print("Q", avgQ, n*n*VQ)
     print("R", avgR, m*m*VR)
-    deviation_Q = [(cont.Q - avgQ) for cont in controllers]
-    deviation_R = [(cont.R - avgR) for cont in controllers]
+    deviation_Q = np.nanstd([cont.Q for cont in controllers], axis=0)
+    deviation_R = np.nanstd([cont.R for cont in controllers], axis=0)
     print("Mean and Std of Q's:", np.mean(deviation_Q), np.std(deviation_Q))
     print("Mean and Std of R's:", np.mean(deviation_R), np.std(deviation_R))
 
@@ -65,7 +65,7 @@ if __name__ == "__main__":
 
     N_test = 1000
     # x0 = np.random.randint(100, size=(n, 1))
-    x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
+    x0 = np.reshape(mvn.rvs(np.zeros(n), n*n*VQ), (n, 1))
     cost_true = np.mean([cont.simulate(x0, N, add_noise=False)[2][1] for cont in controllers], axis=0)
     cost_noisy = np.mean([cont.simulate(x0, N, add_noise=True)[2][1] for cont in controllers], axis=0)
     print("Cost true: {}, cost noisy: {}".format(cost_true, cost_noisy))
@@ -96,7 +96,7 @@ if __name__ == "__main__":
             print(i, end=", ", flush=True)
             cont = controllers[i]
             # x0 = np.random.randint(100, size=(n, 1))
-            x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
+            x0 = np.reshape(mvn.rvs(np.zeros(n), n*n*VQ), (n, 1))
             xs, us, metadata = cont.simulate(x0, N, seed=np.random.randint(0, 1e6), add_noise=True)
             plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
 
@@ -120,7 +120,6 @@ if __name__ == "__main__":
                 cost_lr = cont.simulate(x0, N, K=Klr, seed=seed, add_noise=True)[2][1]
                 if np.linalg.norm(Qadmm) == np.inf:
                     cost_admm = np.nan
-                    print("Failed ADMM solve")
                 else:
                     cost_admm = cont.simulate(x0, N, Q=Qadmm, R=Radmm, seed=seed, add_noise=True)[2][1]
                 if np.isnan(cost_lr) or cost_lr > 1e5 or cost_lr == np.inf:
@@ -145,8 +144,14 @@ if __name__ == "__main__":
             for _ in range(100):
                 # x0 = np.random.randint(100, size=(n, 1))
                 x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
-                cost_fedadmmK = cont.simulate(x0, N, K=Kavg, seed=seed, add_noise=True)[2][1]
-                cost_fedadmmQR = cont.simulate(x0, N, Q=Qavg, R=Ravg, seed=seed, add_noise=True)[2][1]
+                if np.linalg.norm(Kavg) == np.inf:
+                    cost_fedadmmK = np.nan
+                else:
+                    cost_fedadmmK = cont.simulate(x0, N, K=Kavg, seed=seed, add_noise=True)[2][1]
+                if np.linalg.norm(Qavg) == np.inf:
+                    cost_fedadmmQR = np.nan
+                else:
+                    cost_fedadmmQR = cont.simulate(x0, N, Q=Qavg, R=Ravg, seed=seed, add_noise=True)[2][1]
                 costs_fedadmmK.append(cost_fedadmmK)
                 costs_fedadmmQR.append(cost_fedadmmQR)
 

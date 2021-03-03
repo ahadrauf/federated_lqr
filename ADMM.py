@@ -4,6 +4,7 @@ import warnings
 import numpy as np
 import cvxpy as cp
 from scipy.linalg import solve_discrete_are
+import sys
 
 
 def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
@@ -42,6 +43,21 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
     # parameters)
     # More details: https://www.cvxpy.org/tutorial/advanced/index.html#disciplined-parametrized-programming
     # K step
+    # if sys.version[:3] == '3.6':
+    #     Kcp_K = cp.Variable(m, n)
+    #     Pcp_K = cp.Parameter(n, n)
+    #     Qcp_K = cp.Parameter(n, n)
+    #     Rcp_K = cp.Parameter(m, m)
+    #     Ycp = cp.Parameter((n + m, n))
+    #     M_K = cp.vstack([
+    #         Qcp_K + A.T@Pcp_K@(A + B@Kcp_K) - Pcp_K,
+    #         Rcp_K@Kcp_K + B.T@Pcp_K@(A + B@Kcp_K)
+    #     ])
+    #     M_Ktemp = cp.Variable((n + m, n))
+    #     objective_K = cp.Minimize(L(Kcp_K, Qcp_K, Rcp_K) + r(Kcp_K, Qcp_K, Rcp_K) + cp.trace(Ycp.T@M_Ktemp) +
+    #                               rho/2*cp.sum_squares(M_K))
+    #     constraint_K = [M_K == M_Ktemp, Qcp_K >> 0, Rcp_K >> 0, Qcp_K == Qcp_K.T, Rcp_K == Rcp_K.T]
+    # else:
     Kcp_K = cp.Variable((m, n))
     Pcp_K = cp.Parameter((n, n), PSD=True)
     Qcp_K = cp.Parameter((n, n), PSD=True)
@@ -60,6 +76,23 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
     prob_K = cp.Problem(objective_K, constraint_K)
 
     # PQR step
+    # if sys.version[:3] == '3.6':
+    #     Kcp_PQR = cp.Parameter(m, n)
+    #     Pcp_PQR = cp.Variable(n, n)
+    #     Qcp_PQR = cp.Variable(n, n)
+    #     Rcp_PQR = cp.Variable(m, m)
+    #     M_PQR = cp.vstack([
+    #         Qcp_PQR + A.T@Pcp_PQR@(A + B@Kcp_PQR) - Pcp_PQR,
+    #         Rcp_PQR@Kcp_PQR + B.T@Pcp_PQR@(A + B@Kcp_PQR)
+    #     ])
+    #     M_PQRtemp = cp.Variable((n + m, n))
+    #     objective_PQR = cp.Minimize(L(Kcp_K, Qcp_K, Rcp_K) + r(Kcp_K, Qcp_K, Rcp_K) + cp.trace(Ycp.T@M_PQRtemp) + \
+    #                                 rho/2*cp.sum_squares(M_PQR))
+    #     constraint_PQR = [M_PQRtemp == M_PQR, Qcp_K >> 0, Rcp_K >> 0, Qcp_K == Qcp_K.T, Rcp_K == Rcp_K.T]
+    #     # print("PQR step:", objective_PQR.is_dcp(dpp=True), objective_PQR.is_dcp(dpp=False))
+    #     # print("PQR step:", objective_PQR.is_dgp(dpp=True), objective_PQR.is_dgp(dpp=False))
+    #     prob_PQR = cp.Problem(objective_PQR, constraint_PQR)
+    # else:
     Kcp_PQR = cp.Parameter((m, n))
     Pcp_PQR = cp.Variable((n, n), PSD=True)
     Qcp_PQR = cp.Variable((n, n), PSD=True)
@@ -71,7 +104,7 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
     M_PQRtemp = cp.Variable((n + m, n))
     objective_PQR = cp.Minimize(L(Kcp_K, Qcp_K, Rcp_K) + r(Kcp_K, Qcp_K, Rcp_K) + cp.trace(Ycp.T@M_PQRtemp) + \
                                 rho/2*cp.sum_squares(M_PQR))
-    constraint_PQR = [M_PQRtemp == M_PQR]
+    constraint_PQR = [M_PQRtemp == M_PQR, Pcp_PQR>>0, Qcp_PQR>>0, Rcp_PQR>>np.eye(m)]
     # print("PQR step:", objective_PQR.is_dcp(dpp=True), objective_PQR.is_dcp(dpp=False))
     # print("PQR step:", objective_PQR.is_dgp(dpp=True), objective_PQR.is_dgp(dpp=False))
     prob_PQR = cp.Problem(objective_PQR, constraint_PQR)
@@ -94,9 +127,10 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
             prob_K.solve(solver=solver)
         except:
             try:
-                warnings.warn("Defaulting to SCS solver for K step")
+                print("Defaulting to SCS solver for K step", flush=True)
                 prob_K.solve(solver=cp.SCS, acceleration_lookback=0, max_iters=10000)
             except:
+                print("SCS solver failed", flush=True)
                 Kinf = np.inf*np.ones((m, n))
                 Pinf = np.inf*np.ones((n, n))
                 Qinf = np.inf*np.ones((n, n))
@@ -109,9 +143,10 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
             prob_PQR.solve(solver=solver)
         except:
             try:
-                warnings.warn("Defaulting to SCS solver for PQR step")
+                print("Defaulting to SCS solver for PQR step", flush=True)
                 prob_PQR.solve(solver=cp.SCS, acceleration_lookback=0, max_iters=10000)
             except:
+                print("SCS solver failed", flush=True)
                 Kinf = np.inf*np.ones((m, n))
                 Pinf = np.inf*np.ones((n, n))
                 Qinf = np.inf*np.ones((n, n))
@@ -142,6 +177,9 @@ def policy_fitting(L, r, xs, us, Q, R):
     """
     n = xs.shape[1]
     m = us.shape[1]
+    # if sys.version[:3] == '3.6':
+    #     Kcp = cp.Variable(m, n)
+    # else:
     Kcp = cp.Variable((m, n))
     cp.Problem(cp.Minimize(L(Kcp, Q, R) + r(Kcp, Q, R))).solve()
     return Kcp.value

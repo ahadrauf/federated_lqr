@@ -37,8 +37,8 @@ if __name__ == "__main__":
     N = 5  # trajectory length
     M = 40  # number of robots
     Ntraj = 30  # number of trajectories we sample from each robot
-    VQ = np.eye(n)  # /n/n  # covariance of Wishart distribution of Q
-    VR = np.eye(m)  # /m/m  # covariance of Wishart distribution of R
+    VQ = np.eye(n)/n/n  # /n/n  # covariance of Wishart distribution of Q
+    VR = np.eye(m)/m/m  # /m/m  # covariance of Wishart distribution of R
     # x0 = np.random.randint(100, size=(n, 1))
     x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
 
@@ -179,12 +179,10 @@ if __name__ == "__main__":
                 cost_lr = cont.simulate(x0, N, K=Klr, seed=seed, add_noise=True)[2][1]
                 if np.linalg.norm(Qadmm) == np.inf:
                     cost_admm = np.nan
-                    print("Failed ADMM solve")
                 else:
                     cost_admm = cont.simulate(x0, N, Q=Qadmm, R=Radmm, seed=seed, add_noise=True)[2][1]
                 if np.linalg.norm(QfedadmmQR) == np.inf:
                     cost_fedadmmQR = np.nan
-                    print("Failed FedADMM solve")
                 else:
                     cost_fedadmmQR = cont.simulate(x0, N, Q=QfedadmmQR, R=RfedadmmQR, seed=seed, add_noise=True)[2][1]
 
@@ -337,7 +335,7 @@ if __name__ == "__main__":
     axs[0, 0].grid(True)
     axs[0, 0].set_xlabel(r"Trajectory Number \tau")
     axs[0, 0].set_ylabel(r'$L(\tau; \theta)$')
-    axs[0, 0].set_title('Cost vs. Method, N=' + str(N) + ', M=' + str(M) + ', W' + str(np.linalg.norm(controllers[
+    axs[0, 0].set_title('Cost vs. Method, N=' + str(N) + ', M=' + str(M) + ', W~' + str(np.linalg.norm(controllers[
                                                                                                           0].cov_dyn)))
     axs[0, 0].legend()
 
@@ -407,4 +405,5 @@ if __name__ == "__main__":
 
     plt.savefig("figures/" + timestamp + "_fedadmm.png")
     plt.savefig("figures/" + timestamp + "_fedadmm.pdf")
+    print(timestamp)
     # plt.show()
