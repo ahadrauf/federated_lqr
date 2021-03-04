@@ -27,8 +27,8 @@ def initialize_LQR(n, m, VQ, VR, cacheAB=True):
 
     Q = np.reshape(wishart.rvs(n*n, VQ), (n, n))
     R = np.reshape(wishart.rvs(m*m, VR), (m, m))
-    cov_dyn = 0.5*n*n*VQ
-    cov_ctrl = 0.5*m*m*VR
+    cov_dyn = 5*n*VQ
+    cov_ctrl = 5*m*VR
     return LQR(A, B, Q, R, cov_dyn, cov_ctrl)
 
 
@@ -36,11 +36,11 @@ if __name__ == "__main__":
     n, m = 4, 2  # n = dimension of state space, m = # of inputs
     N = 10  # trajectory length
     M = 5  # number of robots
-    Ntraj = 20  # number of trajectories we sample from each robot
-    VQ = np.eye(n)/n/n  # covariance of Wishart distribution of Q
-    VR = np.eye(m)/m/m  # covariance of Wishart distribution of R
+    Ntraj = 10  # number of trajectories we sample from each robot
+    VQ = np.eye(n)/n  # covariance of Wishart distribution of Q
+    VR = np.eye(m)/m  # covariance of Wishart distribution of R
     # x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
-    x0 = np.reshape(mvn.rvs(np.zeros(n), n*n*VQ), (n, 1))
+    x0 = np.reshape(mvn.rvs(np.zeros(n), n*VQ), (n, 1))
 
     # Generate controllers
     controllers = []
@@ -52,8 +52,8 @@ if __name__ == "__main__":
     avgQ = np.nanmean([cont.Q for cont in controllers], axis=0)
     avgR = np.nanmean([cont.R for cont in controllers], axis=0)
     print("Average Q and R vs. Expected")
-    print("Q", avgQ, n*n*VQ)
-    print("R", avgR, m*m*VR)
+    print("Q", avgQ, n*VQ)
+    print("R", avgR, m*VR)
     deviation_Q = np.nanstd([cont.Q for cont in controllers], axis=0)
     deviation_R = np.nanstd([cont.R for cont in controllers], axis=0)
     print("Mean and Std of Q's:", np.mean(deviation_Q), np.std(deviation_Q))
@@ -85,7 +85,7 @@ if __name__ == "__main__":
 
     traj_range = range(1, Ntraj + 1)
     # Assume one seed (different for sampling and testing?)
-    seed_range = np.arange(1, 3)
+    seed_range = np.arange(1, 2)
     seed = 1
 
     xs_aggregate = {i: [] for i in range(M)}
@@ -120,7 +120,7 @@ if __name__ == "__main__":
                 print(m, end=", ", flush=True)
                 cont = controllers[m]
                 # x0 = np.random.randint(100, size=(n, 1))
-                x0 = np.reshape(mvn.rvs(np.zeros(n), n*n*VQ), (n, 1))
+                x0 = np.reshape(mvn.rvs(np.zeros(n), n*VQ), (n, 1))
                 xs, us, metadata = cont.simulate(x0, N, seed=seed, add_noise=True)
                 xs_aggregate[m].append(xs)
                 us_aggregate[m].append(us)
@@ -135,9 +135,10 @@ if __name__ == "__main__":
                 def L_lr(K, Q, R):
                     return cp.sum_squares(K@XS - US)
 
-                Leval = lambda K, Q, R: cont.loss_imitation_learning(x0, N, xs, us,
-                                                                     K=K, Q=Q, R=R,
-                                                                     QR_loss=True)
+                # Leval = lambda K, Q, R: cont.loss_imitation_learning(x0, N, xs, us,
+                #                                                      K=K, Q=Q, R=R,
+                #                                                      QR_loss=True)
+                Leval = L_lr
 
 
                 r = lambda K: (0.01*cp.sum_squares(K), [])
@@ -148,11 +149,11 @@ if __name__ == "__main__":
 
                 xs_agg = np.vstack(xs_aggregate[m])
                 us_agg = np.vstack(us_aggregate[m])
-                Klr = policy_fitting(L_lr, r_lr, xs, us, cont.Q, cont.R)
+                Klr = policy_fitting(L_lr, r_lr, xs_agg, us_agg, cont.Q, cont.R)
                 out_lr.append(Klr)
                 lossK_lr.append(LK(Klr))
 
-                Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us, cont.A, cont.B,
+                Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_a_kalman_constraint_extra(L, r, xs_agg, us_agg, cont.A, cont.B,
                                                                                            niter=50, Leval=Leval)
                 out_admm.append((traj, m, Kadmm, Padmm, Qadmm, Radmm))
                 lossK_admm.append(LK(Kadmm))
@@ -160,23 +161,24 @@ if __name__ == "__main__":
                 lossR_admm.append(LR(Radmm))
 
                 def Lfed(K):
-                    return sum([cp.sum_squares(K@x - u) for x, u in zip(xs, us)])
+                    return cp.sum_squares(K@XS - US)
+                    # return sum([cp.sum_squares(K@x - u) for x, u in zip(xs, us)])
                     # return cp.sum_squares(Q - cont.Q) + cp.sum_squares(R - cont.R)
 
                 def Lfed_QR(K, Q, R):
                     return sum([cp.sum_squares(K@x - u) for x, u in zip(xs, us)]) + cp.sum_squares(Q - prevQ) + \
                            cp.sum_squares(R - prevR)
 
-                Leval = lambda K, Q, R: cont.loss_imitation_learning(x0, N, xs, us, Q=Q, R=R, K=K)
+                # Leval = lambda K, Q, R: cont.loss_imitation_learning(x0, N, xs, us, Q=Q, R=R, K=K)
 
                 if traj == 1:
                     KfedadmmQR, PfedadmmQR, QfedadmmQR, RfedadmmQR = \
-                        policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us, cont.A, cont.B,
+                        policy_fitting_with_a_kalman_constraint_extra(L, r, xs_agg, us_agg, cont.A, cont.B,
                                                                       P0=prevP, Q0=prevQ, R0=prevR,
                                                                       n_random=10, Leval=Leval)
                 else:
                     KfedadmmQR, PfedadmmQR, QfedadmmQR, RfedadmmQR = \
-                        policy_fitting_with_a_kalman_constraint_extra(Lfed, r, xs, us, cont.A, cont.B,
+                        policy_fitting_with_a_kalman_constraint_extra(Lfed, r, xs_agg, us_agg, cont.A, cont.B,
                                                                       P0=prevP, Q0=prevQ, R0=prevR,
                                                                       n_random=10, Leval=Leval)
 
@@ -431,8 +433,8 @@ if __name__ == "__main__":
     # # np.save(timestamp + "std_costs_fedadmmK_vsW.npy", std_costs_fedadmmK_vsN)
     # np.save(timestamp + "std_costs_fedadmmQR_vsW.npy", std_costs_fedadmmQR_vsN)
 
-    fig.set_size_inches(32, 18)  # set figure's size manually to your full screen (32x18)
-    plt.savefig("figures/" + timestamp + "_fedadmm_palan.png", bbox_inches='tight')
-    plt.savefig("figures/" + timestamp + "_fedadmm_palan.pdf", bbox_inches='tight')
+    fig.set_size_inches(16, 9)  # set figure's size manually to your full screen (32x18)
+    plt.savefig("figures/" + timestamp + "_fedadmm_palan_large_noise_reg_QR_10x_weight_QR_M=5.png", bbox_inches='tight')
+    plt.savefig("figures/" + timestamp + "_fedadmm_palan_large_noise_reg_QR_10x_weight_QR_M=5.pdf", bbox_inches='tight')
     print(timestamp)
     # plt.show()

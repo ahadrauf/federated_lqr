@@ -128,7 +128,7 @@ if __name__ == "__main__":
 
             XS = np.hstack(xs[:-1])  # N x (n, 1) --> (n, N)
             US = np.hstack(us)       # N x (m, 1) --> (m, N)
-            def L(K, Q, R):
+            def L(K):
                 return cp.sum_squares(K@XS - US)
             r = lambda K, Q, R: 0.01*cp.sum_squares(K)
             LK = lambda K: np.linalg.norm(K - cont.getK())

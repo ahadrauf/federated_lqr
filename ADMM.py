@@ -203,7 +203,8 @@ def _policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, 
             Qcp + A.T@Pcp@(A + B@K) - Pcp,
             Rcp@K + B.T@Pcp@(B@K + A)
         ])
-        objective = cp.Minimize(cp.sum_squares(Qcp) + cp.sum_squares(Rcp) + cp.trace(Y.T@M) + rho/2*cp.sum_squares(M))
+        objective = cp.Minimize(10*cp.sum_squares(Qcp) + 10*cp.sum_squares(Rcp) + cp.trace(Y.T@M) +
+                                rho/2*cp.sum_squares(M))
         prob = cp.Problem(objective, [Pcp>>0, Qcp>>0, Rcp>>np.eye(m)])
         try:
             prob.solve(solver=solver)
@@ -245,13 +246,15 @@ def _policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, 
     return -np.linalg.solve(R + B.T@P@B, B.T@P@A), P, Q, R
 
 
-def policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, Leval, n_random=5, niter=50, rho=1,
+def policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, Leval=None, n_random=5, niter=50, rho=1,
                                                   P0 = None, Q0 = None, R0 = None):
     """
     Wrapper around _policy_fitting_with_a_kalman_constraint.
     """
     n, m = B.shape
 
+    if Leval is None:
+        Leval = lambda K, Q, R: L(K)
     def evaluate_L(K, Q, R):
         Kcp = cp.Variable((m, n))
         Qcp = cp.Variable((n, n))
@@ -259,8 +262,10 @@ def policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, L
         Kcp.value = K
         Qcp.value = Q
         Rcp.value = R
-        # return Leval(Kcp.valu, Qcp, Rcp).value
-        return Leval(K, Q, R)
+        # return Leval(Kcp, Qcp, Rcp).value
+        loss = Leval(K, Q, R)
+        # print(loss)
+        return loss.value
 
     # solve with zero initialization
     P = np.zeros((n, n)) if P0 is None else P0
@@ -273,15 +278,18 @@ def policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, L
     best_L = evaluate_L(K, Q, R)
 
     # run n_random random initializations; keep best
-    for _ in range(n_random):
-        P = 1./np.sqrt(n)*np.random.randn(n, n)
-        Q = 1./np.sqrt(n)*np.random.randn(n, n)
-        R = 1./np.sqrt(m)*np.random.randn(m, m)
+    for iter in range(n_random):
+        if iter < n_random / 2 and P0 is not None:
+            P = P0 + 1./n/n*np.random.randn(n, n)
+            Q = Q0 + 1./n/n*np.random.randn(n, n)
+            R = R0 + 1./m/m*np.random.randn(m, m)
+        else:
+            P = 1./np.sqrt(n)*np.random.randn(n, n)
+            Q = 1./np.sqrt(n)*np.random.randn(n, n)
+            R = 1./np.sqrt(m)*np.random.randn(m, m)
         K, P, Q, R = _policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, P.T@P, Q.T@Q, R.T@R,
-                                                            niter=niter,
-                                                     rho=rho)
+                                                            niter=niter, rho=rho)
         L_K = evaluate_L(K, Q, R)
-        # print(L_K, flush=True)
         if L_K < best_L:
             best_L = L_K
             best_K, bP, bQ, bR = K, P, Q, R

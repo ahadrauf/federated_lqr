@@ -79,6 +79,8 @@ if __name__ == "__main__":
     # seed_range = np.arange(1, 4)
 
     times = []
+    xs_aggregate = {i: [] for i in range(M)}
+    us_aggregate = {i: [] for i in range(M)}
     for niter in niter_range:
         start_time = time.time()
         print("niter =", niter, end=" - ", flush=True)
@@ -98,20 +100,29 @@ if __name__ == "__main__":
             # x0 = np.random.randint(100, size=(n, 1))
             x0 = np.reshape(mvn.rvs(np.zeros(n), n*n*VQ), (n, 1))
             xs, us, metadata = cont.simulate(x0, N, seed=np.random.randint(0, 1e6), add_noise=True)
+            xs_aggregate[i].append(xs)
+            us_aggregate[i].append(us)
+            xs_agg = np.vstack(xs_aggregate[i])
+            us_agg = np.vstack(us_aggregate[i])
             plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
 
-            def L(K, Q, R):
-                return sum([cp.sum_squares(K@x - u) for x, u in zip(xs, us)])
-            r = lambda K, Q, R: 0.01*cp.sum_squares(K)
+            XS = np.hstack(xs[:-1])  # N x (n, 1) --> (n, N)
+            US = np.hstack(us)  # N x (m, 1) --> (m, N)
+            def L_lr(K, Q, R):
+                return cp.sum_squares(K@XS - US)
+
+            r = lambda K: (0.01*cp.sum_squares(K), [])
+            L = lambda K: cp.sum_squares(K@XS - US)
+            r_lr = lambda K, Q, R: 0.01*cp.sum_squares(K)
             LQ = lambda Q: np.linalg.norm(Q - cont.Q)
             LR = lambda R: np.linalg.norm(R - cont.R)
 
             # temp_start_time = time.time()
-            Klr = policy_fitting(L, r, xs, us, cont.Q, cont.R)
+            Klr = policy_fitting(L_lr, r_lr, xs_agg, us_agg, cont.Q, cont.R)
             # print("Time elapsed after LR: ", time.time() - temp_start_time)
             out_lr.append(Klr)
             # temp_start_time = time.time()
-            Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B,
+            Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_a_kalman_constraint_extra(L, r, xs_agg, us_agg, cont.A, cont.B,
                                                                                niter=niter)
             # print("Time elapsed after ADMM: ", time.time() - temp_start_time)
             out_admm.append((niter, i, Kadmm, Padmm, Qadmm, Radmm))
