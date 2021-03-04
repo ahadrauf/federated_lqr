@@ -76,11 +76,17 @@ class LQR:
                + np.sum([(u.T - u_true.T)@self.R@(u.T - u_true) for u, u_true in zip(us, us_true)])
 
     def loss_imitation_learning(self, x0, N, xs_true, us_true, Q=None, R=None, K=None, average_over=100,
-                                add_noise=True):
+                                add_noise=True, QR_loss=False):
         losses = []
         for _ in range(average_over):
-            xs, us, _ = self.simulate(self, x0=x0, N=N, add_noise=add_noise, Q=Q, R=R, K=K)
-            losses.append(self._loss_imitation_learning(xs, us, xs_true, us_true))
+            # print(x0, flush=True)
+            xs, us, _ = self.simulate(x0=x0, N=N, add_noise=add_noise, Q=Q, R=R, K=K)
+            loss = self._loss_imitation_learning(xs, us, xs_true, us_true)
+            # if Q is not None:
+            #     loss += 1e2*np.linalg.norm(Q - self.Q)
+            # if R is not None:
+            #     loss += 1e2*np.linalg.norm(R - self.R)
+            losses.append(loss)
         return np.nanmean(losses)
 
     def getK(self, Q=None, R=None):
@@ -91,7 +97,7 @@ class LQR:
         try:
             P = solve_discrete_are(self.A, self.B, Q, R)
             # K = -inv(R + self.B.T@P@self.B)@self.B.T@P@self.A
-            K =  -np.linalg.solve(R + self.B.T@P@self.B, self.B.T@P@self.A)
+            K = -np.linalg.solve(R + self.B.T@P@self.B, self.B.T@P@self.A)
         except Exception as e:
             print(e)
             print("Failed to solve for K, Q={}, R={}".format(Q, R))

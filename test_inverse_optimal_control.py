@@ -26,8 +26,8 @@ def initialize_LQR(n, m, VQ, VR, cacheAB=True):
 
     Q = np.reshape(wishart.rvs(n*n, VQ), (n, n))
     R = np.reshape(wishart.rvs(m*m, VR), (m, m))
-    cov_dyn = .5 * n*n*VQ
-    cov_ctrl = .5 * m*m*VR
+    cov_dyn = .5*n*n*VQ
+    cov_ctrl = .5*m*m*VR
     return LQR(A, B, Q, R, cov_dyn, cov_ctrl)
 
 
@@ -39,7 +39,7 @@ if __name__ == "__main__":
     VQ = np.eye(n)/n/n  # covariance of Wishart distribution of Q
     VR = np.eye(m)/m/m  # covariance of Wishart distribution of R
     # x0 = np.random.randint(100, size=(n, 1))
-    x0 = np.reshape(mvn.rvs(np.zeros(n), .5 * n*n*VQ), (n, 1))
+    x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
 
     # Generate controllers
     controllers = []
@@ -88,12 +88,12 @@ if __name__ == "__main__":
                 xs, us, metadata = cont.simulate(x0, N, seed=seed, add_noise=True)
                 # plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
 
-                L = lambda K: sum(cp.sum_squares(K@x - u) for x, u in zip(xs, us))
-                r = lambda K: 0.01 * cp.sum_squares(K)
+                L = lambda K, Q, R: sum(cp.sum_squares(K@x - u) for x, u in zip(xs, us))
+                r = lambda K, Q, R: 0.01*cp.sum_squares(K)
                 LQ = lambda Q: np.linalg.norm(Q - cont.Q)
                 LR = lambda R: np.linalg.norm(R - cont.R)
 
-                Klr = policy_fitting(L, r, xs, us)
+                Klr = policy_fitting(L, r, xs, us, cont.Q, cont.R)
                 out_lr.append(Klr)
                 Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B)
                 out_admm.append((Kadmm, Padmm, Qadmm, Radmm))
@@ -132,8 +132,8 @@ if __name__ == "__main__":
         std_costs_fedadmmK_vsN.append(np.nanstd(costs_fedadmmK))
         costs_fedadmmQR_vsN.append(np.nanmean(costs_fedadmmQR))
         std_costs_fedadmmQR_vsN.append(np.nanstd(costs_fedadmmQR))
-        print("| %3.3f | %3.3f | %3.3f | %3.3f" % (costs_lr_vsN[-1], costs_admm_vsN[-1], costs_fedadmmK_vsN[-1],
-              costs_fedadmmQR_vsN[-1]))
+        print("| %3.3f | %3.3f | %3.3f | %3.3f"%(costs_lr_vsN[-1], costs_admm_vsN[-1], costs_fedadmmK_vsN[-1],
+                                                 costs_fedadmmQR_vsN[-1]))
 
         np.save("costs_lr_vsN.npy", costs_lr_vsN)
         np.save("costs_admm_vsN.npy", costs_admm_vsN)
@@ -171,10 +171,12 @@ if __name__ == "__main__":
     plt.fill_between(N_range, costs_admm_vsN - std_costs_admm_vsN/3, costs_admm_vsN + std_costs_admm_vsN/3,
                      alpha=.5, color='green')
     plt.scatter(N_range, costs_fedadmmK_vsN, s=4, marker='o', c='red', label='FedADMM on K')
-    plt.fill_between(N_range, costs_fedadmmK_vsN - std_costs_fedadmmK_vsN/3, costs_fedadmmK_vsN + std_costs_fedadmmK_vsN/3,
+    plt.fill_between(N_range, costs_fedadmmK_vsN - std_costs_fedadmmK_vsN/3,
+                     costs_fedadmmK_vsN + std_costs_fedadmmK_vsN/3,
                      alpha=.5, color='red')
     plt.scatter(N_range, costs_fedadmmQR_vsN, s=4, marker='o', c='purple', label='FedADMM on Q, R')
-    plt.fill_between(N_range, costs_fedadmmQR_vsN - std_costs_fedadmmQR_vsN/3, costs_fedadmmQR_vsN + std_costs_fedadmmQR_vsN/3,
+    plt.fill_between(N_range, costs_fedadmmQR_vsN - std_costs_fedadmmQR_vsN/3,
+                     costs_fedadmmQR_vsN + std_costs_fedadmmQR_vsN/3,
                      alpha=.5, color='purple')
 
     np.save("costs_lr_vsN.npy", costs_lr_vsN)

@@ -137,7 +137,7 @@ def _ADMM(L, r, xs, us, A, B, P0=None, Q0=None, R0=None, niter=50, rho=1):
     return Kcp_K.value, Pcp_PQR.value, Qcp_PQR.value, Rcp_PQR.value
 
 
-def _policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, P, Q, R, niter=50, rho=1):
+def _policy_fitting_with_a_kalman_constraint_extra(LK, LQR, rK, rQR, xs, us_observed, A, B, P, Q, R, niter=50, rho=1):
     """
     Policy fitting with a Kalman constraint.
     Args:
@@ -173,18 +173,19 @@ def _policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, 
     for k in range(niter):
         # K step
         Kcp = cp.Variable((m, n))
-        r_obj, r_cons = r(Kcp)
+        r_obj, r_cons = rK(Kcp)
         M = cp.vstack([
             Q + A.T@P@(A + B@Kcp) - P,
             R@Kcp + B.T@P@(A + B@Kcp)
         ])
-        objective = cp.Minimize(L(Kcp) + r_obj + cp.trace(Y.T@M) + rho/2*cp.sum_squares(M))
+        objective = cp.Minimize(LK(Kcp) + r_obj + cp.trace(Y.T@M) + rho/2*cp.sum_squares(M))
         prob = cp.Problem(objective, r_cons)
+        # prob.solve(solver=solver)
         try:
             prob.solve(solver=solver)
         except:
             try:
-                print("Defaulting to SCS solver for PQR step", flush=True)
+                print("Defaulting to SCS solver for K step", flush=True)
                 prob.solve(solver=cp.SCS, acceleration_lookback=0, max_iters=10000)
             except:
                 print("SCS solver failed", flush=True)
@@ -203,7 +204,7 @@ def _policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, 
             Qcp + A.T@Pcp@(A + B@K) - Pcp,
             Rcp@K + B.T@Pcp@(B@K + A)
         ])
-        objective = cp.Minimize(cp.sum_squares(Qcp) + cp.sum_squares(Rcp) + cp.trace(Y.T@M) + rho/2*cp.sum_squares(M))
+        objective = cp.Minimize(LQR(Qcp, Rcp) + cp.trace(Y.T@M) + rho/2*cp.sum_squares(M))
         prob = cp.Problem(objective, [Pcp>>0, Qcp>>0, Rcp>>np.eye(m)])
         try:
             prob.solve(solver=solver)
@@ -245,7 +246,7 @@ def _policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, 
     return -np.linalg.solve(R + B.T@P@B, B.T@P@A), P, Q, R
 
 
-def policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, Leval, n_random=5, niter=50, rho=1,
+def policy_fitting_with_a_kalman_constraint_extra(LK, LQR, rK, rQR, xs, us_observed, A, B, n_random=5, niter=50, rho=1,
                                                   P0 = None, Q0 = None, R0 = None):
     """
     Wrapper around _policy_fitting_with_a_kalman_constraint.
@@ -259,15 +260,14 @@ def policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, L
         Kcp.value = K
         Qcp.value = Q
         Rcp.value = R
-        # return Leval(Kcp.valu, Qcp, Rcp).value
-        return Leval(K, Q, R)
+        return LK(Kcp).value + LQR(Qcp, Rcp).value
 
     # solve with zero initialization
     P = np.zeros((n, n)) if P0 is None else P0
     Q = np.zeros((n, n)) if Q0 is None else Q0
     R = np.zeros((m, m)) if R0 is None else R0
     K, P, Q, R = _policy_fitting_with_a_kalman_constraint_extra(
-        L, r, xs, us_observed, A, B, P, Q, R, niter=niter, rho=rho)
+        LK, LQR, rK, rQR, xs, us_observed, A, B, P, Q, R, niter=niter, rho=rho)
 
     best_K, bP, bQ, bR = K, P, Q, R
     best_L = evaluate_L(K, Q, R)
@@ -277,11 +277,10 @@ def policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, L
         P = 1./np.sqrt(n)*np.random.randn(n, n)
         Q = 1./np.sqrt(n)*np.random.randn(n, n)
         R = 1./np.sqrt(m)*np.random.randn(m, m)
-        K, P, Q, R = _policy_fitting_with_a_kalman_constraint_extra(L, r, xs, us_observed, A, B, P.T@P, Q.T@Q, R.T@R,
+        K, P, Q, R = _policy_fitting_with_a_kalman_constraint_extra(LK, LQR, rK, rQR, xs, us_observed, A, B, P.T@P, Q.T@Q, R.T@R,
                                                             niter=niter,
                                                      rho=rho)
         L_K = evaluate_L(K, Q, R)
-        # print(L_K, flush=True)
         if L_K < best_L:
             best_L = L_K
             best_K, bP, bQ, bR = K, P, Q, R

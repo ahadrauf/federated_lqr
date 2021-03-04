@@ -5,7 +5,7 @@ from scipy.stats import wishart
 from scipy.stats import multivariate_normal as mvn
 import matplotlib.pyplot as plt
 from utils import *
-from ADMM import *
+from ADMM_palan_v2 import *
 import pickle
 from datetime import datetime
 
@@ -35,8 +35,8 @@ def initialize_LQR(n, m, VQ, VR, cacheAB=True):
 if __name__ == "__main__":
     n, m = 4, 2  # n = dimension of state space, m = # of inputs
     N = 10  # trajectory length
-    M = 30  # number of robots
-    Ntraj = 1  # number of trajectories we sample from each robot
+    M = 2  # number of robots
+    Ntraj = 2  # number of trajectories we sample from each robot
     VQ = np.eye(n)/n/n  # covariance of Wishart distribution of Q
     VR = np.eye(m)/m/m  # covariance of Wishart distribution of R
     # x0 = np.reshape(mvn.rvs(np.zeros(n), .5*n*n*VQ), (n, 1))
@@ -127,45 +127,65 @@ if __name__ == "__main__":
                 plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
 
             XS = np.hstack(xs[:-1])  # N x (n, 1) --> (n, N)
-            US = np.hstack(us)       # N x (m, 1) --> (m, N)
-            def L(K, Q, R):
+            US = np.hstack(us)  # N x (m, 1) --> (m, N)
+
+
+            def L(K):
                 return cp.sum_squares(K@XS - US)
-            r = lambda K, Q, R: 0.01*cp.sum_squares(K)
+
+
+            def L_lr(K, Q, R):
+                return cp.sum_squares(K@XS - US)
+
+
+            L_QR = lambda Q, R: cp.Constant(0.)
+
+            r = lambda K: (0.01*cp.sum_squares(K), [])
+            rQR = lambda Q, R: (cp.Constant(0.), [])
+            r_lr = lambda K, Q, R: 0.01*cp.sum_squares(K)
             LK = lambda K: np.linalg.norm(K - cont.getK())
             LQ = lambda Q: np.linalg.norm(Q - cont.Q)
             LR = lambda R: np.linalg.norm(R - cont.R)
 
             xs_agg = np.vstack(xs_aggregate[m])
             us_agg = np.vstack(us_aggregate[m])
-            Klr = policy_fitting(L, r, xs, us, cont.Q, cont.R)
+            Klr = policy_fitting(L_lr, r_lr, xs, us, cont.Q, cont.R)
             out_lr.append(Klr)
             lossK_lr.append(LK(Klr))
 
-            print("Start", flush=True)
-
-            Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B,
-                                                                               niter=50)
+            Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_a_kalman_constraint_extra(L, L_QR, r, rQR, xs, us,
+                                                                                       cont.A, cont.B,
+                                                                                       niter=50)
             out_admm.append((traj, m, Kadmm, Padmm, Qadmm, Radmm))
             lossK_admm.append(LK(Kadmm))
             lossQ_admm.append(LQ(Qadmm))
             lossR_admm.append(LR(Radmm))
-            print("Done", flush=True)
 
 
             def Lfed(K, Q, R):
-                return sum([cp.sum_squares(K@x - u) for x, u in zip(xs, us)]) + cp.sum_squares(Q - prevQ) + \
+                return cp.sum_squares(K@XS - US)
+                # return cp.sum_squares(Q - cont.Q) + cp.sum_squares(R - cont.R)
+
+
+            def Lfed_QR(K, Q, R):
+                return cp.sum_squares(K@XS - US) + cp.sum_squares(Q - prevQ) + \
                        cp.sum_squares(R - prevR)
                 # return cp.sum_squares(Q - cont.Q) + cp.sum_squares(R - cont.R)
 
 
+            LfedK = lambda K: cp.sum_squares(K@XS - US)
+            LfedQR2 = lambda Q, R: cp.sum_squares(Q - prevQ) + \
+                                   cp.sum_squares(R - prevR)
+            LfedQR1 = lambda Q, R: cp.Constant(0.)
+
             if traj == 1:
                 KfedadmmQR, PfedadmmQR, QfedadmmQR, RfedadmmQR = \
-                    policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B,
-                                                          P0=prevP, Q0=prevQ, R0=prevR)
+                    policy_fitting_with_a_kalman_constraint_extra(LfedK, LfedQR1, r, rQR, xs, us, cont.A, cont.B,
+                                                                  P0=prevP, Q0=prevQ, R0=prevR)
             else:
                 KfedadmmQR, PfedadmmQR, QfedadmmQR, RfedadmmQR = \
-                    policy_fitting_with_kalman_constraint(Lfed, r, xs, us, cont.A, cont.B,
-                                                          P0=prevP, Q0=prevQ, R0=prevR)
+                    policy_fitting_with_a_kalman_constraint_extra(LfedK, LfedQR2, r, rQR, xs, us, cont.A, cont.B,
+                                                                  P0=prevP, Q0=prevQ, R0=prevR)
 
             # print(sum([np.linalg.norm(KfedadmmQR@x - u)**2 for x, u in zip(xs, us)]))
             # if traj > 1:
@@ -200,10 +220,10 @@ if __name__ == "__main__":
                 costs_admm.append(cost_admm)
                 costs_fedadmmQR.append(cost_fedadmmQR)
 
-        Kavg = np.nanmean([K for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
-        Pavg = np.nanmean([P for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
-        Qavg = np.nanmean([Q for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
-        Ravg = np.nanmean([R for _, _, K, P, Q, R in out_admm[-M:]], axis=0)
+        Kavg = np.nanmean([K for _, _, K, P, Q, R in out_fedadmmQR[-M:]], axis=0)
+        Pavg = np.nanmean([P for _, _, K, P, Q, R in out_fedadmmQR[-M:]], axis=0)
+        Qavg = np.nanmean([Q for _, _, K, P, Q, R in out_fedadmmQR[-M:]], axis=0)
+        Ravg = np.nanmean([R for _, _, K, P, Q, R in out_fedadmmQR[-M:]], axis=0)
         # out_fedaddmmK.append((traj, Kavg))
         out_admm_aggregate.append((traj, Pavg, Qavg, Ravg))
 
@@ -267,12 +287,13 @@ if __name__ == "__main__":
                 std_lossQ_fedadmmQR_vsN[-1],
                 lossR_fedadmmQR_vsN[-1], std_lossR_fedadmmQR_vsN[-1]), flush=True)
 
-        np.save('data/' + timestamp + "_fedadmm.npy", [costs_lr_vsN, std_costs_lr_vsN,
-                                                       costs_admm_vsN, std_costs_admm_vsN,
-                                                       costs_fedadmmQR_vsN, std_costs_fedadmmQR_vsN,
-                                                       lossK_lr_vsN,
-                                                       lossK_admm_vsN, lossQ_admm_vsN, lossR_admm_vsN,
-                                                       lossK_fedadmmQR_vsN, lossQ_fedadmmQR_vsN, lossR_fedadmmQR_vsN])
+        np.save('data/' + timestamp + "_fedadmm_palan_v2.npy", [costs_lr_vsN, std_costs_lr_vsN,
+                                                                costs_admm_vsN, std_costs_admm_vsN,
+                                                                costs_fedadmmQR_vsN, std_costs_fedadmmQR_vsN,
+                                                                lossK_lr_vsN,
+                                                                lossK_admm_vsN, lossQ_admm_vsN, lossR_admm_vsN,
+                                                                lossK_fedadmmQR_vsN, lossQ_fedadmmQR_vsN,
+                                                                lossR_fedadmmQR_vsN])
         # np.save(timestamp + "costs_lr_vsW.npy", costs_lr_vsN)
         # np.save(timestamp + "costs_admm_vsW.npy", costs_admm_vsN)
         # # np.save(timestamp + "costs_fedadmmK_vsW.npy", costs_fedadmmK_vsN)
@@ -286,8 +307,8 @@ if __name__ == "__main__":
             plt.xlabel("t")
             plt.ylabel("x")
             plt.title("Trajectories")
-            plt.savefig("figures/" + timestamp + "_fedadmm_trajectories.png")
-            plt.savefig("figures/" + timestamp + "_fedadmm_trajectories.pdf")
+            plt.savefig("figures/" + timestamp + "_fedadmm_palan_v2_trajectories.png")
+            plt.savefig("figures/" + timestamp + "_fedadmm_palan_v2_trajectories.pdf")
             # plt.show()
 
     # print(costs_lr)
@@ -395,16 +416,16 @@ if __name__ == "__main__":
     axs[1, 1].set_title('R Loss, N=' + str(N) + ', M=' + str(M))
     axs[1, 1].legend()
 
-    np.save('data/' + timestamp + "_fedadmm.npy", [costs_lr_vsN, std_costs_lr_vsN,
-                                                   costs_admm_vsN, std_costs_admm_vsN,
-                                                   costs_fedadmmQR_vsN, std_costs_fedadmmQR_vsN,
-                                                   lossK_lr_vsN, std_lossK_lr_vsN,
-                                                   lossK_admm_vsN, std_lossK_admm_vsN,
-                                                   lossQ_admm_vsN, std_lossQ_admm_vsN,
-                                                   lossR_admm_vsN, std_lossR_admm_vsN,
-                                                   lossK_fedadmmQR_vsN, std_lossK_fedadmmQR_vsN,
-                                                   lossQ_fedadmmQR_vsN, std_lossQ_fedadmmQR_vsN,
-                                                   lossR_fedadmmQR_vsN, std_lossR_fedadmmQR_vsN])
+    np.save('data/' + timestamp + "_fedadmm_palan_v2.npy", [costs_lr_vsN, std_costs_lr_vsN,
+                                                            costs_admm_vsN, std_costs_admm_vsN,
+                                                            costs_fedadmmQR_vsN, std_costs_fedadmmQR_vsN,
+                                                            lossK_lr_vsN, std_lossK_lr_vsN,
+                                                            lossK_admm_vsN, std_lossK_admm_vsN,
+                                                            lossQ_admm_vsN, std_lossQ_admm_vsN,
+                                                            lossR_admm_vsN, std_lossR_admm_vsN,
+                                                            lossK_fedadmmQR_vsN, std_lossK_fedadmmQR_vsN,
+                                                            lossQ_fedadmmQR_vsN, std_lossQ_fedadmmQR_vsN,
+                                                            lossR_fedadmmQR_vsN, std_lossR_fedadmmQR_vsN])
     # np.save(timestamp + "costs_lr_vsW.npy", costs_lr_vsN)
     # np.save(timestamp + "costs_admm_vsW.npy", costs_admm_vsN)
     # # np.save(timestamp + "costs_fedadmmK_vsW.npy", costs_fedadmmK_vsN)
@@ -414,7 +435,11 @@ if __name__ == "__main__":
     # # np.save(timestamp + "std_costs_fedadmmK_vsW.npy", std_costs_fedadmmK_vsN)
     # np.save(timestamp + "std_costs_fedadmmQR_vsW.npy", std_costs_fedadmmQR_vsN)
 
-    plt.savefig("figures/" + timestamp + "_fedadmm.png")
-    plt.savefig("figures/" + timestamp + "_fedadmm.pdf")
+    # manager = plt.get_current_fig_manager()
+    # manager.resize(*manager.window.maxsize())
+    # fig.tight_layout()
+    fig.set_size_inches(32, 18)  # set figure's size manually to your full screen (32x18)
+    plt.savefig("figures/" + timestamp + "_fedadmm_palan_v2.png", bbox_inches='tight')
+    plt.savefig("figures/" + timestamp + "_fedadmm_palan_v2.pdf", bbox_inches='tight')
     print(timestamp)
     # plt.show()

@@ -101,7 +101,7 @@ if __name__ == "__main__":
             plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
 
             def L(K, Q, R):
-                sum([cp.sum_squares(K@x - u) for x, u in zip(xs, us)])
+                return sum([cp.sum_squares(K@x - u) for x, u in zip(xs, us)])
             r = lambda K, Q, R: 0.01*cp.sum_squares(K)
             LQ = lambda Q: np.linalg.norm(Q - cont.Q)
             LR = lambda R: np.linalg.norm(R - cont.R)

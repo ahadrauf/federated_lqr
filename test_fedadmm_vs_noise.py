@@ -95,15 +95,15 @@ if __name__ == "__main__":
             xs, us, metadata = cont.simulate(x0, N, seed=np.random.randint(0, 1e6), add_noise=True)
             # plt.plot(range(N + 1), [x[0, 0] for x in xs], label="Q={}, R={}".format(cont.Q[0, 0], cont.R[0, 0]))
 
-            L = lambda K: sum(cp.sum_squares(K@x - u) for x, u in zip(xs, us))
-            r = lambda K: 0.01*cp.sum_squares(K)
+            L = lambda K, Q, R: sum(cp.sum_squares(K@x - u) for x, u in zip(xs, us))
+            r = lambda K, Q, R: 0.01*cp.sum_squares(K)
             LQ = lambda Q: np.linalg.norm(Q - cont.Q)
             LR = lambda R: np.linalg.norm(R - cont.R)
 
-            Klr = policy_fitting(L, r, xs, us)
+            Klr = policy_fitting(L, r, xs, us, cont.Q, cont.R)
             out_lr.append(Klr)
             Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_kalman_constraint(L, r, xs, us, cont.A, cont.B,
-                                                                               niter=100)
+                                                                               niter=50)
             out_admm.append((W, i, Kadmm, Padmm, Qadmm, Radmm))
 
             seed = np.random.randint(0, 1e6)
