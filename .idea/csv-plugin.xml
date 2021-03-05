@@ -17,6 +17,13 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="\fedadmm_palan.py">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="\test_fedadmm_vs_niter.py">
           <value>
             <Attribute>
