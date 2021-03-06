@@ -15,8 +15,8 @@ n, m = 4, 2
 nrandom = 4
 covarQR = 0.1
 niter = 3
-Wdyn = 3
-Wctrl = 6
+Wdyn = 2
+Wctrl = 4
 N = 2
 traj_range = np.arange(1, 31)
 seed_range = np.arange(1, 2)
@@ -45,7 +45,7 @@ beta = 0.1  # multiplier on l_D
 #     [0., 0., 0., 0.]
 # ])
 A = np.random.randn(n, n)
-A = A / np.abs(np.linalg.eig(A)[0]).max()
+A = A/np.abs(np.linalg.eig(A)[0]).max()
 B = np.random.randn(n, m)
 # A = np.array([[0.13741826, 0.02876351, 0.50096039, 0.24711964],
 #               [-0.08638155, -0.29891056, 0.16163153, 0.24719121],
@@ -56,7 +56,7 @@ B = np.random.randn(n, m)
 #               [-1.38525459, -0.51277622],
 #               [-1.43032195, 2.17007322]])
 W = Wdyn*np.eye(n)
-VQ = np.eye(n)   # /n for normalizing to eye(n)
+VQ = np.eye(n)  # /n for normalizing to eye(n)
 VR = np.eye(m)  # /m
 
 Q_trues = []
@@ -166,10 +166,11 @@ def plot_losses(costs_lr, costs_admm, costs_fedadmm, costs_pfedadmm, verbose=Fal
     costs_fedadmm = np.array(costs_fedadmm)
     costs_pfedadmm = np.array(costs_pfedadmm)
 
-    np.save('data/' + timestamp + "_fedadmm_v2.npy", [costs_lr, costs_admm, costs_fedadmm, costs_pfedadmm,
-                                                      out_lr, out_admm, out_fedadmm, out_pfedadmm,
-                                                      costs_lr_K, costs_admm_KQR, costs_fedadmm_KQR,
-                                                      costs_pfedadmm_KQR])
+    np.save('data/' + timestamp + "_fedadmm_v2_with_metadata.npy", [A, B, K_trues, P_trues, Q_trues, R_trues,
+                                                                    costs_lr, costs_admm, costs_fedadmm, costs_pfedadmm,
+                                                                    out_lr, out_admm, out_fedadmm, out_pfedadmm,
+                                                                    costs_lr_K, costs_admm_KQR, costs_fedadmm_KQR,
+                                                                    costs_pfedadmm_KQR])
 
     mean_lr = np.nanmean(costs_lr, axis=1)
     std_lr = np.nanstd(costs_lr, axis=1)
@@ -196,8 +197,8 @@ def plot_losses(costs_lr, costs_admm, costs_fedadmm, costs_pfedadmm, verbose=Fal
         print("Mean FedADMM", mean_fedadmm)
         print("Mean pFedADMM", mean_pfedadmm)
 
-    # axs[0, 0].axhline(cost_noise, ls='--', c='k', label='expert (with noise)')
-    # axs[0, 0].axhline(cost_true, ls='-', c='k', label='optimal (without noise)')
+    axs[0, 0].axhline(cost_noise, ls='--', c='k', label='expert (with noise)')
+    axs[0, 0].axhline(cost_true, ls='-', c='k', label='optimal (without noise)')
     axs[0, 0].scatter(idx, mean_lr, s=8, marker='o', c='blue', label='PF')
     axs[0, 0].fill_between(idx, mean_lr - std_lr/3, mean_lr + std_lr/3, alpha=.3, color='blue')
     axs[0, 0].scatter(idx, mean_admm, s=8, marker='*', c='green', label='ADMM')
@@ -235,7 +236,7 @@ def plot_losses(costs_lr, costs_admm, costs_fedadmm, costs_pfedadmm, verbose=Fal
     axs[1, 0].legend()
 
     # Plot Q Loss
-    # axs[0, 1].axhline(cost_LQ_true, ls='--', c='k', label='Random Guessing')
+    # axs[0, 1].axhline(cost_LQ_true, ls='-', c='k', label='Random Guessing')
     axs[0, 1].axhline(cost_fLQ_true, ls='--', c='k', label='FedADMM with True Qavg')
     axs[0, 1].scatter(idx, mean_admm_KQR['Q'], s=8, marker='o', c='green', label='ADMM')
     axs[0, 1].fill_between(idx, mean_admm_KQR['Q'] - std_admm_KQR['Q']/3, mean_admm_KQR['Q'] + std_admm_KQR['Q']/3/3,
@@ -255,7 +256,7 @@ def plot_losses(costs_lr, costs_admm, costs_fedadmm, costs_pfedadmm, verbose=Fal
     axs[0, 1].legend()
 
     # Plot R Loss
-    # axs[1, 1].axhline(cost_LR_true, ls='--', c='k', label='Random Guessing')
+    # axs[1, 1].axhline(cost_LR_true, ls='-', c='k', label='Random Guessing')
     axs[1, 1].axhline(cost_fLR_true, ls='--', c='k', label='FedADMM with True Ravg')
     axs[1, 1].scatter(idx, mean_admm_KQR['R'], s=8, marker='o', c='green', label='ADMM')
     axs[1, 1].fill_between(idx, mean_admm_KQR['R'] - std_admm_KQR['R']/3, mean_admm_KQR['R'] + std_admm_KQR['R']/3/3,
@@ -340,10 +341,11 @@ for traj in traj_range:
             # print(np.shape(xs))
             xs_agg[i] = np.append(xs_agg[i], xs, axis=0)
             us_agg[i] = np.append(us_agg[i], us, axis=0)
+
+
             # print(np.shape(xs_agg[i]), np.shape(us_agg[i]))
             # print(xs_agg[i])
             # print(us_agg[i])
-
 
             def L(K):
                 loss = cp.sum_squares(xs_agg[i]@K.T - us_agg[i])
