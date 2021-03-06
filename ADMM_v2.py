@@ -5,7 +5,7 @@ import numpy as np
 import cvxpy as cp
 from scipy.linalg import solve_discrete_are
 
-def _ADMM(L, LPQR, r, rPQR, xs, us, A, B, P, Q, R, niter=50, rho=1):
+def _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R, niter=50, rho=1):
     """
     Policy fitting with a Kalman constraint.
     Args:
@@ -90,6 +90,7 @@ def _ADMM(L, LPQR, r, rPQR, xs, us, A, B, P, Q, R, niter=50, rho=1):
         P = Pcp.value
         Q = Qcp.value
         R = Rcp.value
+        # print('Inside ADMM:', np.shape(K), np.shape(P), np.shape(Q), np.shape(R), np.shape(A), np.shape(B), flush=True)
 
         # Y step
         residual = np.vstack([
@@ -114,7 +115,7 @@ def _ADMM(L, LPQR, r, rPQR, xs, us, A, B, P, Q, R, niter=50, rho=1):
     return -np.linalg.solve(R + B.T@P@B, B.T@P@A), P, Q, R
 
 
-def policy_fitting(L, r, xs, us):
+def policy_fitting(L, r, n, m):
     """
     Traditional policy fitting (no ADMM)
     :param L: L(K), Loss function
@@ -123,8 +124,6 @@ def policy_fitting(L, r, xs, us):
     :param us: Array of observed inputs (N x m)
     :return: Kcp (gain matrix found by policy fitting) (m x n)
     """
-    n = xs.shape[1]
-    m = us.shape[1]
     Kpf = cp.Variable((m, n))
     r_obj, r_cons = r(Kpf)
     cp.Problem(cp.Minimize(L(Kpf) + r_obj), r_cons).solve()
@@ -132,7 +131,7 @@ def policy_fitting(L, r, xs, us):
     return Kpf.value
 
 
-def policy_fitting_with_a_kalman_constraint(L, r, xs, us_observed, A, B, n_random=5, niter=50, rho=1,
+def policy_fitting_with_a_kalman_constraint(L, r, A, B, n_random=5, niter=50, rho=1,
                                             P0=None, Q0=None, R0=None, LPQR=None, rPQR=None):
     """
     Wrapper around _ADMM.
@@ -154,10 +153,18 @@ def policy_fitting_with_a_kalman_constraint(L, r, xs, us_observed, A, B, n_rando
     P = np.zeros((n, n))
     Q = np.zeros((n, n))
     R = np.zeros((m, m))
-    K, P, Q, R = _ADMM(L, LPQR, r, rPQR, xs, us_observed, A, B, P, Q, R, niter=niter, rho=rho)
+    K, P, Q, R = _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R, niter=niter, rho=rho)
 
     best_K, bP, bQ, bR = K, P, Q, R
     best_L = evaluate_L(K)
+
+    if P0 is not None and R0 is not None and Q0 is not None:
+        K, P, Q, R = _ADMM(L, LPQR, r, rPQR, A, B, P0, Q0, R0, niter=niter, rho=rho)
+
+        L_K = evaluate_L(K)
+        if L_K < best_L:
+            best_L = L_K
+            best_K, bP, bQ, bR = K, P, Q, R
 
     # run n_random random initializations; keep best
     for iter in range(n_random):
@@ -175,7 +182,7 @@ def policy_fitting_with_a_kalman_constraint(L, r, xs, us_observed, A, B, n_rando
         P = P.T@P
         Q = Q.T@Q
         R = R.T@R
-        K, P, Q, R = _ADMM(L, LPQR, r, rPQR, xs, us_observed, A, B, P, Q, R,
+        K, P, Q, R = _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R,
                            niter=niter, rho=rho)
         L_K = evaluate_L(K)
         if L_K < best_L:
