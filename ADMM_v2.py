@@ -4,8 +4,9 @@ import warnings
 import numpy as np
 import cvxpy as cp
 from scipy.linalg import solve_discrete_are
+import matplotlib.pyplot as plt
 
-def _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R, niter=50, rho=1):
+def _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R, niter=50, rho=1, plot=False):
     """
     Policy fitting with a Kalman constraint.
     Args:
@@ -38,16 +39,16 @@ def _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R, niter=50, rho=1):
         print("Solver MOSEK is not installed, falling back to SCS.", flush=True)
         solver = cp.SCS
 
+    losses = []
     for k in range(niter):
         # K step
         Kcp = cp.Variable((m, n))
-        r_obj, r_cons = r(Kcp)
         M = cp.vstack([
             Q + A.T@P@(A + B@Kcp) - P,
             R@Kcp + B.T@P@(A + B@Kcp)
         ])
-        objective = cp.Minimize(L(Kcp) + r_obj + cp.trace(Y.T@M) + rho/2*cp.sum_squares(M))
-        prob = cp.Problem(objective, r_cons)
+        objective = cp.Minimize(L(Kcp) + r(Kcp) + cp.trace(Y.T@M) + rho/2*cp.sum_squares(M))
+        prob = cp.Problem(objective, r(Kcp))
         try:
             prob.solve(solver=solver)
         except:
@@ -99,6 +100,13 @@ def _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R, niter=50, rho=1):
         ])
         Y = Y + rho*residual
 
+        M = cp.vstack([
+            Q + A.T@P@(A + B@K) - P,
+            R@K + B.T@P@(B@K + A)
+        ])
+        losses.append(L(K).value + LPQR(Q, R).value + r(K).value + rPQR(Q, R).value + cp.trace(Y.T@M).value +
+                                rho/2*cp.sum_squares(M).value)
+
     R = (R + R.T)/2
     Q = (Q + Q.T)/2
 
@@ -111,6 +119,11 @@ def _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R, niter=50, rho=1):
     Q = v@np.diag(w)@v.T
 
     P = solve_discrete_are(A, B, Q, R)
+
+    if plot:
+        fig = plt.figure()
+        plt.plot(range(len(losses)), losses)
+        plt.show()
 
     return -np.linalg.solve(R + B.T@P@B, B.T@P@A), P, Q, R
 
@@ -125,8 +138,8 @@ def policy_fitting(L, r, n, m):
     :return: Kcp (gain matrix found by policy fitting) (m x n)
     """
     Kpf = cp.Variable((m, n))
-    r_obj, r_cons = r(Kpf)
-    cp.Problem(cp.Minimize(L(Kpf) + r_obj), r_cons).solve()
+    r_obj = r(Kpf)
+    cp.Problem(cp.Minimize(L(Kpf) + r_obj)).solve()
 
     return Kpf.value
 
@@ -153,7 +166,7 @@ def policy_fitting_with_a_kalman_constraint(L, r, A, B, n_random=5, niter=50, rh
     P = np.zeros((n, n))
     Q = np.zeros((n, n))
     R = np.zeros((m, m))
-    K, P, Q, R = _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R, niter=niter, rho=rho)
+    K, P, Q, R = _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R, niter=niter, rho=rho, plot=True)
 
     best_K, bP, bQ, bR = K, P, Q, R
     best_L = evaluate_L(K)

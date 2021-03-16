@@ -23,7 +23,7 @@ class LQR:
         self.cov_dyn = cov_dyn
         self.cov_ctrl = cov_ctrl
 
-    def simulate(self, x0: np.ndarray, N: int, seed=None, add_noise=False, Q=None, R=None, K=None) -> \
+    def simulate(self, x0: np.ndarray, N: int, seed=None, add_noise=False, A=None, B=None, Q=None, R=None, K=None) -> \
             Tuple[np.ndarray, np.ndarray, Tuple[np.ndarray, float]]:
         """
         Generate trajectory (given dynamics and controller noise) starting at x0 and continuing for N time steps
@@ -36,6 +36,10 @@ class LQR:
         """
         if seed is not None:
             np.random.seed(seed)
+        if A is None:
+            A = self.A
+        if B is None:
+            B = self.B
         if Q is None:
             Q = self.Q
         if R is None:
@@ -53,11 +57,11 @@ class LQR:
                 u = mvn.rvs(np.ndarray.flatten(K@x), self.cov_ctrl)
             else:
                 u = K@x
-            u = np.reshape(u, (self.B.shape[1], 1))
+            u = np.reshape(u, (B.shape[1], 1))
             if add_noise:
-                x_new = mvn.rvs(np.ndarray.flatten(self.A@x + self.B@u), self.cov_dyn)
+                x_new = mvn.rvs(np.ndarray.flatten(A@x + B@u), self.cov_dyn)
             else:
-                x_new = self.A@x + self.B@u
+                x_new = A@x + B@u
             x_new = np.reshape(x_new, (np.size(x_new), 1))
 
             xs.append(x_new)
@@ -75,17 +79,13 @@ class LQR:
         return np.sum([(x.T - x_true.T)@self.Q@(x.T - x_true) for x, x_true in zip(xs, xs_true)]) \
                + np.sum([(u.T - u_true.T)@self.R@(u.T - u_true) for u, u_true in zip(us, us_true)])
 
-    def loss_imitation_learning(self, x0, N, xs_true, us_true, Q=None, R=None, K=None, average_over=100,
+    def loss_imitation_learning(self, x0, N, xs_true, us_true, A=None, B=None, Q=None, R=None, K=None, average_over=100,
                                 add_noise=True, QR_loss=False):
         losses = []
         for _ in range(average_over):
             # print(x0, flush=True)
-            xs, us, _ = self.simulate(x0=x0, N=N, add_noise=add_noise, Q=Q, R=R, K=K)
+            xs, us, _ = self.simulate(x0=x0, N=N, add_noise=add_noise, A=A, B=B, Q=Q, R=R, K=K)
             loss = self._loss_imitation_learning(xs, us, xs_true, us_true)
-            # if Q is not None:
-            #     loss += 1e2*np.linalg.norm(Q - self.Q)
-            # if R is not None:
-            #     loss += 1e2*np.linalg.norm(R - self.R)
             losses.append(loss)
         return np.nanmean(losses)
 

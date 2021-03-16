@@ -1,0 +1,23 @@
+n = 2;
+m = 2;
+A = [1 2; 3 4];
+B = [5 6; 7 8];
+Q = 2*eye(n);
+R = eye(m);
+P = idare(A, B, Q, R);
+K = -inv(R+B'*P*B)*B'*P*A;
+G = B*inv(R)*B';
+Phi = A+B*K;
+T = eye(n^2) - kron(Phi', Phi');
+l = inv(norm(inv(T), 2));
+
+syms q r
+r = 0.01;
+dQ = q*Q;
+dR = r*R;
+dG = B*inv(R+dR) - inv(R))*B';
+
+n = @(A) norm(A, 'fro');
+% left = l^2/(n(G)*n(A)^2) - 4*n(Phi)^2*n(P)^2*n(G)*n(dG)/n(G) - 4*l*n(P)*n(dG)/n(G) - ...
+%     4*n(dQ)*n(dG)/n(G) - 4*n(dQ)*n(Phi)^2;
+left = ((2*n(P)*n(dG)*n(A)^2)/l - 1)^2 - (4*(n(dG)*n(A)^2 + n(G)*n(Phi)^2)*(n(dG)*n(A)^2*n(P)^2 + n(dQ)))/l^2
