@@ -14,7 +14,7 @@ def wishart(V, n, p):
 
 
 if __name__ == '__main__':
-    N = 1000
+    N = 3000
     n = 3
     p = 2
     C_size = 10
@@ -40,17 +40,17 @@ if __name__ == '__main__':
         l2error.append(np.linalg.norm(np.mean(Qs, axis=0) - np.mean(Ws, axis=0)))
         # l2error.append(np.linalg.norm(Qs[-1] - Ws[-1]))
         # l2error.append(np.linalg.norm(Qs[-1] - np.mean(Ws, axis=0)))
-        print(np.mean(Qs, axis=0))
-        print(np.mean(Ws, axis=0))
-        print(Vhat*n*n)
+        # print(np.mean(Qs, axis=0))
+        # print(np.mean(Ws, axis=0))
+        # print(Vhat*n*n)
         # print(Qs[-1])
         # print(Ws[-1])
-        print()
+        # print()
 
-    plt.plot(range(1, N), l2error)
+    plt.plot(range(1, N), np.divide(l2error, np.linalg.norm(Ws[-1])))
     plt.grid(True)
     plt.xlabel("Iter")
-    plt.ylabel(r'$|| \overline{Q} - \overline{W} ||$')
+    plt.ylabel(r'$|| \overline{Q} - \overline{W} || / ||\overline{W}||$')
     plt.title(r'Convergence of Empirical Bayes Model for Wishart Distribution Given $Q = CC^T$, where ' + \
               '$C \sim \operatorname{Normal}(' + str(mean) + ',' + str(std) + ')^{' + str(p) + '\\times ' + str(
         C_size) + '}$')

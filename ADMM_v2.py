@@ -166,7 +166,7 @@ def policy_fitting_with_a_kalman_constraint(L, r, A, B, n_random=5, niter=50, rh
     P = np.zeros((n, n))
     Q = np.zeros((n, n))
     R = np.zeros((m, m))
-    K, P, Q, R = _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R, niter=niter, rho=rho, plot=True)
+    K, P, Q, R = _ADMM(L, LPQR, r, rPQR, A, B, P, Q, R, niter=niter, rho=rho, plot=False)
 
     best_K, bP, bQ, bR = K, P, Q, R
     best_L = evaluate_L(K)

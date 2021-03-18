@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.linalg import solve_discrete_are
 import cvxpy as cp
-from ADMM_slack import *
+from ADMM_v2 import *
 from utils import *
 import matplotlib.pyplot as plt
 import warnings
@@ -13,20 +13,23 @@ from scipy.stats import wishart
 M = 10  # number of robots
 n, m = 4, 2  # dimension of state (n) and input (m)
 nrandom = 4  # number of random starts on ADMM (optimize over which random start gives the best L(K))
-covarQR = 0.0  # covariance of generated Q and R (only matters if use_wishart = False)
+covarQR = 0.3  # 0.05  # covariance of generated Q and R (only matters if use_wishart = False)
 niter = 10  # number of iterations within ADMM
 Wdyn = 1  # magnitude of dynamics noise
 Wctrl = 3  # magnitude of control noise
-N = 10  # trajectory length
-traj_range = np.arange(1, 31)  # # of demonstrations (each of length N)
+N = 5  # trajectory length
+H = 1  # global communication frequency
+traj_range = np.arange(1, 16)  # # of demonstrations (each of length N)
 seed_range = np.arange(1, 2)  # # of seeds to average over (the value actually doesn't matter, just the range length)
 admm_QRreg = True  # whether to add regularization on Q and R to Boyd's ADMM implementation
-use_wishart = True  # whether to initialize the Q's and R's using a wishart distribution
+use_wishart = False  # whether to initialize the Q's and R's using a wishart distribution
 noise_on_output_loss = False
 noise_on_input_data = True
 average_over = 10
-alpha = 0.1  # multiplier on r(K, Q, R)
+alpha = 0  # multiplier on r(K, Q, R)
+alphaK = 0.05
 beta = 0.01  # multiplier on l_D
+name_clarifier = "ADMMslack_fixedrandom_1Q_10R"
 # A = np.array([
 #     [.99997, .039, 0, -.322],
 #     [-.065, .99681, 7.74, 0],
@@ -45,20 +48,20 @@ beta = 0.01  # multiplier on l_D
 #     [0.016055, -0.10197781, 0.010601, 0.],
 #     [0., 0., 0., 0.]
 # ])
-A = np.random.randn(n, n)
-A = A/np.abs(np.linalg.eig(A)[0]).max()
-B = np.random.randn(n, m)
+# A = np.random.randn(n, n)
+# A = A/np.abs(np.linalg.eig(A)[0]).max()
+# B = np.random.randn(n, m)
 A = np.array([[0.13741826, 0.02876351, 0.50096039, 0.24711964],
-              [-0.08638155, -0.29891056, 0.16163153, 0.24719121],
-              [0.06460169, 0.24025215, -0.29127423, -0.28410344],
-              [0.18903618, 0.43957661, -0.43899608, -0.38508461]])
+             [-0.08638155, -0.29891056, 0.16163153, 0.24719121],
+             [0.06460169, 0.24025215, -0.29127423, -0.28410344],
+             [0.18903618, 0.43957661, -0.43899608, -0.38508461]])
 B = np.array([[1.12563572, -0.59218407],
-              [-0.01612495, -0.18979434],
-              [-1.38525459, -0.51277622],
-              [-1.43032195, 2.17007322]])
+             [-0.01612495, -0.18979434],
+             [-1.38525459, -0.51277622],
+             [-1.43032195, 2.17007322]])
 W = Wdyn*np.eye(n)
-VQ = np.eye(n)  # /n for normalizing to eye(n)
-VR = np.eye(m)  # /m
+VQ = np.eye(n)/n  # /n for normalizing to eye(n)
+VR = np.eye(m)/m  # /m
 
 Q_trues = []
 R_trues = []
@@ -71,8 +74,8 @@ for i in range(M):
         Q = np.reshape(wishart.rvs(n*n, VQ), (n, n))
         R = np.reshape(wishart.rvs(m*m, VR), (m, m))
     else:
-        Q = np.eye(n) + covarQR*ATA(np.random.rand(n, n))
-        R = np.eye(m) + covarQR*ATA(np.random.rand(m, m))
+        Q = 1*np.eye(n) + covarQR*ATA(np.random.rand(n, n))
+        R = 10*np.eye(m) + covarQR*ATA(np.random.rand(m, m))
     Q_trues.append(Q)
     R_trues.append(R)
     P_trues.append(solve_discrete_are(A, B, Q_trues[i], R_trues[i]))
@@ -82,8 +85,8 @@ print("R_trues", R_trues)
 print("K_trues", K_trues)
 
 
-def simulate(K, i, N=10, seed=None, add_noise=False, train=False):
-    if seed is not None:
+def simulate(K, robot, N=10, seed=None, add_noise=False, train=False):
+    if seed is None:
         np.random.seed(np.random.randint(0, 1000))
     x = np.random.multivariate_normal(np.zeros(n), W)
     # if train:
@@ -100,7 +103,7 @@ def simulate(K, i, N=10, seed=None, add_noise=False, train=False):
             u += Wctrl*np.random.randn(m)
         xs.append(x)
         us.append(u)
-        cost += (x@Q_trues[i]@x + u@R_trues[i]@u)/N
+        cost += (x@Q_trues[robot]@x + u@R_trues[robot]@u)/N
         # print('x', A@x + B@u)
         x = A@x + B@u + np.random.multivariate_normal(np.zeros(n), W)
     xs = np.array(xs)
@@ -109,10 +112,10 @@ def simulate(K, i, N=10, seed=None, add_noise=False, train=False):
     return cost, xs, us
 
 
-def simulate_cost(K, i, N=10, seed=None, add_noise=None, average_over=10, train=False):
+def simulate_cost(K, robot, N=10, seed=None, add_noise=None, average_over=10, train=False):
     if add_noise is None:
         add_noise = noise_on_output_loss
-    tests = [simulate(K, i, N=N, seed=seed, add_noise=add_noise, train=train) for _ in range(average_over)]
+    tests = [simulate(K, robot, N=N, seed=seed, add_noise=add_noise, train=train) for _ in range(average_over)]
     return np.nanmean([cost for cost, _, _ in tests])
 
 
@@ -192,6 +195,7 @@ def plot_losses(costs_lr, costs_admm, costs_centralized, costs_fedadmm, costs_pf
     std_pfedadmm = np.nanstd(costs_pfedadmm, axis=1)
 
     idx = np.arange(0, len(costs_lr_K))
+    idx_plot = np.arange(1, len(costs_lr_K) + 1)
     mean_lr_K = {'K': np.array([np.nanmean(costs_lr_K[i]['K']) for i in idx])}
     std_lr_K = {'K': np.array([np.nanstd(costs_lr_K[i]['K']) for i in idx])}
     mean_admm_KQR = {k: np.array([np.nanmean(costs_admm_KQR[i][k]) for i in idx]) for k in 'KQR'}
@@ -210,18 +214,18 @@ def plot_losses(costs_lr, costs_admm, costs_centralized, costs_fedadmm, costs_pf
         print("Mean FedADMM", mean_fedadmm)
         print("Mean pFedADMM", mean_pfedadmm)
 
-    # axs[0, 0].axhline(cost_noise, ls='--', c='k', label='expert (with noise)')
     axs[0, 0].axhline(cost_true, ls='-', c='k', label='optimal (without noise)')
-    axs[0, 0].scatter(idx, mean_lr, s=8, marker='o', c='cyan', label='PF')
-    axs[0, 0].fill_between(idx, mean_lr - std_lr/3, mean_lr + std_lr/3, alpha=.3, color='cyan')
-    axs[0, 0].scatter(idx, mean_admm, s=8, marker='*', c='green', label='ADMM')
-    axs[0, 0].fill_between(idx, mean_admm - std_admm/3, mean_admm + std_admm/3, alpha=.3, color='green')
-    axs[0, 0].scatter(idx, mean_cent, s=8, marker='*', c='red', label='Centralized')
-    axs[0, 0].fill_between(idx, mean_cent - std_cent/3, mean_cent + std_cent/3, alpha=.3, color='red')
-    axs[0, 0].scatter(idx, mean_fedadmm, s=8, marker='*', c='orange', label='FedADMM')
-    axs[0, 0].fill_between(idx, mean_fedadmm - std_fedadmm/3, mean_fedadmm + std_fedadmm/3, alpha=.3, color='orange')
-    axs[0, 0].scatter(idx, mean_pfedadmm, s=8, marker='*', c='purple', label='pFedADMM')
-    axs[0, 0].fill_between(idx, mean_pfedadmm - std_pfedadmm/3, mean_pfedadmm + std_pfedadmm/3, alpha=.3,
+    axs[0, 0].axhline(cost_noise, ls='--', c='k', label='expert (with noise)')
+    axs[0, 0].scatter(idx_plot, mean_lr, s=8, marker='o', c='cyan', label='PF')
+    axs[0, 0].fill_between(idx_plot, mean_lr - std_lr/3, mean_lr + std_lr/3, alpha=.3, color='cyan')
+    axs[0, 0].scatter(idx_plot, mean_admm, s=8, marker='*', c='green', label='ADMM')
+    axs[0, 0].fill_between(idx_plot, mean_admm - std_admm/3, mean_admm + std_admm/3, alpha=.3, color='green')
+    axs[0, 0].scatter(idx_plot, mean_cent, s=8, marker='*', c='red', label='Centralized')
+    axs[0, 0].fill_between(idx_plot, mean_cent - std_cent/3, mean_cent + std_cent/3, alpha=.3, color='red')
+    axs[0, 0].scatter(idx_plot, mean_fedadmm, s=8, marker='*', c='orange', label='FedADMM')
+    axs[0, 0].fill_between(idx_plot, mean_fedadmm - std_fedadmm/3, mean_fedadmm + std_fedadmm/3, alpha=.3, color='orange')
+    axs[0, 0].scatter(idx_plot, mean_pfedadmm, s=8, marker='*', c='purple', label='pFedADMM')
+    axs[0, 0].fill_between(idx_plot, mean_pfedadmm - std_pfedadmm/3, mean_pfedadmm + std_pfedadmm/3, alpha=.3,
                            color='purple')
     axs[0, 0].semilogy()
     axs[0, 0].set_ylabel('cost')
@@ -230,21 +234,21 @@ def plot_losses(costs_lr, costs_admm, costs_centralized, costs_fedadmm, costs_pf
     axs[0, 0].legend()
 
     # Plot K
-    axs[1, 0].scatter(idx, mean_lr_K['K'], s=8, marker='o', c='cyan', label='policy fitting')
-    axs[1, 0].fill_between(idx, mean_lr_K['K'] - std_lr_K['K']/3, mean_lr_K['K'] + std_lr_K['K']/3, alpha=.3,
+    axs[1, 0].scatter(idx_plot, mean_lr_K['K'], s=8, marker='o', c='cyan', label='policy fitting')
+    axs[1, 0].fill_between(idx_plot, mean_lr_K['K'] - std_lr_K['K']/3, mean_lr_K['K'] + std_lr_K['K']/3, alpha=.3,
                            color='cyan')
-    axs[1, 0].scatter(idx, mean_admm_KQR['K'], s=8, marker='o', c='green', label='ADMM')
-    axs[1, 0].fill_between(idx, mean_admm_KQR['K'] - std_admm_KQR['K']/3, mean_admm_KQR['K'] + std_admm_KQR['K']/3/3,
+    axs[1, 0].scatter(idx_plot, mean_admm_KQR['K'], s=8, marker='o', c='green', label='ADMM')
+    axs[1, 0].fill_between(idx_plot, mean_admm_KQR['K'] - std_admm_KQR['K']/3, mean_admm_KQR['K'] + std_admm_KQR['K']/3/3,
                            alpha=.3, color='green')
-    axs[1, 0].scatter(idx, mean_cent_KQR['K'], s=8, marker='o', c='red', label='Centralized')
-    axs[1, 0].fill_between(idx, mean_cent_KQR['K'] - std_cent_KQR['K']/3, mean_cent_KQR['K'] + std_cent_KQR['K']/3/3,
+    axs[1, 0].scatter(idx_plot, mean_cent_KQR['K'], s=8, marker='o', c='red', label='Centralized')
+    axs[1, 0].fill_between(idx_plot, mean_cent_KQR['K'] - std_cent_KQR['K']/3, mean_cent_KQR['K'] + std_cent_KQR['K']/3/3,
                            alpha=.3, color='red')
-    axs[1, 0].scatter(idx, mean_fedadmm_KQR['K'], s=8, marker='o', c='orange', label='FedADMM')
-    axs[1, 0].fill_between(idx, mean_fedadmm_KQR['K'] - std_fedadmm_KQR['K']/3,
+    axs[1, 0].scatter(idx_plot, mean_fedadmm_KQR['K'], s=8, marker='o', c='orange', label='FedADMM')
+    axs[1, 0].fill_between(idx_plot, mean_fedadmm_KQR['K'] - std_fedadmm_KQR['K']/3,
                            mean_fedadmm_KQR['K'] + std_fedadmm_KQR['K']/3,
                            alpha=.3, color='orange')
-    axs[1, 0].scatter(idx, mean_pfedadmm_KQR['K'], s=8, marker='o', c='purple', label='pFedADMM')
-    axs[1, 0].fill_between(idx, mean_pfedadmm_KQR['K'] - std_pfedadmm_KQR['K']/3,
+    axs[1, 0].scatter(idx_plot, mean_pfedadmm_KQR['K'], s=8, marker='o', c='purple', label='pFedADMM')
+    axs[1, 0].fill_between(idx_plot, mean_pfedadmm_KQR['K'] - std_pfedadmm_KQR['K']/3,
                            mean_pfedadmm_KQR['K'] + std_pfedadmm_KQR['K']/3,
                            alpha=.3, color='purple')
     axs[1, 0].grid(True)
@@ -256,18 +260,18 @@ def plot_losses(costs_lr, costs_admm, costs_centralized, costs_fedadmm, costs_pf
     # Plot Q Loss
     # axs[0, 1].axhline(cost_LQ_true, ls='-', c='k', label='Random Guessing')
     axs[0, 1].axhline(cost_fLQ_true, ls='--', c='k', label='FedADMM with True Qavg')
-    axs[0, 1].scatter(idx, mean_admm_KQR['Q'], s=8, marker='o', c='green', label='ADMM')
-    axs[0, 1].fill_between(idx, mean_admm_KQR['Q'] - std_admm_KQR['Q']/3, mean_admm_KQR['Q'] + std_admm_KQR['Q']/3/3,
+    axs[0, 1].scatter(idx_plot, mean_admm_KQR['Q'], s=8, marker='o', c='green', label='ADMM')
+    axs[0, 1].fill_between(idx_plot, mean_admm_KQR['Q'] - std_admm_KQR['Q']/3, mean_admm_KQR['Q'] + std_admm_KQR['Q']/3/3,
                            alpha=.3, color='green')
-    axs[0, 1].scatter(idx, mean_cent_KQR['Q'], s=8, marker='o', c='red', label='Centralized')
-    axs[0, 1].fill_between(idx, mean_cent_KQR['Q'] - std_cent_KQR['Q']/3, mean_cent_KQR['Q'] + std_cent_KQR['Q']/3/3,
+    axs[0, 1].scatter(idx_plot, mean_cent_KQR['Q'], s=8, marker='o', c='red', label='Centralized')
+    axs[0, 1].fill_between(idx_plot, mean_cent_KQR['Q'] - std_cent_KQR['Q']/3, mean_cent_KQR['Q'] + std_cent_KQR['Q']/3/3,
                            alpha=.3, color='red')
-    axs[0, 1].scatter(idx, mean_fedadmm_KQR['Q'], s=8, marker='o', c='orange', label='FedADMM')
-    axs[0, 1].fill_between(idx, mean_fedadmm_KQR['Q'] - std_fedadmm_KQR['Q']/3,
+    axs[0, 1].scatter(idx_plot, mean_fedadmm_KQR['Q'], s=8, marker='o', c='orange', label='FedADMM')
+    axs[0, 1].fill_between(idx_plot, mean_fedadmm_KQR['Q'] - std_fedadmm_KQR['Q']/3,
                            mean_fedadmm_KQR['Q'] + std_fedadmm_KQR['Q']/3,
                            alpha=.3, color='orange')
-    axs[0, 1].scatter(idx, mean_pfedadmm_KQR['Q'], s=8, marker='o', c='purple', label='pFedADMM')
-    axs[0, 1].fill_between(idx, mean_pfedadmm_KQR['Q'] - std_pfedadmm_KQR['Q']/3,
+    axs[0, 1].scatter(idx_plot, mean_pfedadmm_KQR['Q'], s=8, marker='o', c='purple', label='pFedADMM')
+    axs[0, 1].fill_between(idx_plot, mean_pfedadmm_KQR['Q'] - std_pfedadmm_KQR['Q']/3,
                            mean_pfedadmm_KQR['Q'] + std_pfedadmm_KQR['Q']/3,
                            alpha=.3, color='purple')
     axs[0, 1].grid(True)
@@ -279,18 +283,18 @@ def plot_losses(costs_lr, costs_admm, costs_centralized, costs_fedadmm, costs_pf
     # Plot R Loss
     # axs[1, 1].axhline(cost_LR_true, ls='-', c='k', label='Random Guessing')
     axs[1, 1].axhline(cost_fLR_true, ls='--', c='k', label='FedADMM with True Ravg')
-    axs[1, 1].scatter(idx, mean_admm_KQR['R'], s=8, marker='o', c='green', label='ADMM')
-    axs[1, 1].fill_between(idx, mean_admm_KQR['R'] - std_admm_KQR['R']/3, mean_admm_KQR['R'] + std_admm_KQR['R']/3/3,
+    axs[1, 1].scatter(idx_plot, mean_admm_KQR['R'], s=8, marker='o', c='green', label='ADMM')
+    axs[1, 1].fill_between(idx_plot, mean_admm_KQR['R'] - std_admm_KQR['R']/3, mean_admm_KQR['R'] + std_admm_KQR['R']/3/3,
                            alpha=.3, color='green')
-    axs[1, 1].scatter(idx, mean_cent_KQR['R'], s=8, marker='o', c='red', label='Centralized')
-    axs[1, 1].fill_between(idx, mean_cent_KQR['R'] - std_cent_KQR['R']/3, mean_cent_KQR['R'] + std_cent_KQR['R']/3/3,
+    axs[1, 1].scatter(idx_plot, mean_cent_KQR['R'], s=8, marker='o', c='red', label='Centralized')
+    axs[1, 1].fill_between(idx_plot, mean_cent_KQR['R'] - std_cent_KQR['R']/3, mean_cent_KQR['R'] + std_cent_KQR['R']/3/3,
                            alpha=.3, color='red')
-    axs[1, 1].scatter(idx, mean_fedadmm_KQR['R'], s=8, marker='o', c='orange', label='FedADMM')
-    axs[1, 1].fill_between(idx, mean_fedadmm_KQR['R'] - std_fedadmm_KQR['R']/3,
+    axs[1, 1].scatter(idx_plot, mean_fedadmm_KQR['R'], s=8, marker='o', c='orange', label='FedADMM')
+    axs[1, 1].fill_between(idx_plot, mean_fedadmm_KQR['R'] - std_fedadmm_KQR['R']/3,
                            mean_fedadmm_KQR['R'] + std_fedadmm_KQR['R']/3,
                            alpha=.3, color='orange')
-    axs[1, 1].scatter(idx, mean_pfedadmm_KQR['R'], s=8, marker='o', c='purple', label='pFedADMM')
-    axs[1, 1].fill_between(idx, mean_pfedadmm_KQR['R'] - std_pfedadmm_KQR['R']/3,
+    axs[1, 1].scatter(idx_plot, mean_pfedadmm_KQR['R'], s=8, marker='o', c='purple', label='pFedADMM')
+    axs[1, 1].fill_between(idx_plot, mean_pfedadmm_KQR['R'] - std_pfedadmm_KQR['R']/3,
                            mean_pfedadmm_KQR['R'] + std_pfedadmm_KQR['R']/3,
                            alpha=.3, color='purple')
     axs[1, 1].grid(True)
@@ -302,9 +306,9 @@ def plot_losses(costs_lr, costs_admm, costs_centralized, costs_fedadmm, costs_pf
     fig_name = "figures/" + timestamp + "_fedadmm_v2_random_M={}_Wctrl={}_Wdyn={}_nrandom={}_covarQR={}_niter=" \
                                         "{}_nseed={}\n_N={}_Ntraj={}_admmQRreg={}_usewishartQR={}_" \
                                         "noisyinput={}_noisyoutput={}" \
-                                        "_alpha={}_beta={}".format(
+                                        "_alpha={}_beta={}_H={}\n{}".format(
         M, Wctrl, Wdyn, nrandom, covarQR, niter, len(seed_range), N, traj_range[-1], admm_QRreg, use_wishart,
-        noise_on_input_data, noise_on_output_loss, alpha, beta
+        noise_on_input_data, noise_on_output_loss, alpha, beta, H, name_clarifier
     )
     fig.suptitle(fig_name)
     plt.tight_layout()
@@ -328,7 +332,8 @@ for i in range(M):
 traj_prev = traj_range[0] - 1
 xs_agg = {i: np.zeros((1, n)) for i in range(M)}
 us_agg = {i: np.zeros((1, m)) for i in range(M)}
-for traj in traj_range:
+prevfedQ, prevfedR, prevpfedQ, prevpfedR = None, None, None, None  # Just used to define the scope
+for traj_num, traj in enumerate(traj_range):
     print("Traj # =", traj, end=" - ", flush=True)
     # start = datetime.now()
     start = time.time()
@@ -347,24 +352,29 @@ for traj in traj_range:
         print(k, end=", (", flush=True)
 
         # prevfedP = np.nanmean([out_admm[(traj_prev, k, i)][1] for i in range(M)], axis=0)
-        prevfedQ = np.nanmean([out_admm[(traj_prev, k, i)][2] for i in range(M)], axis=0)
-        prevfedR = np.nanmean([out_admm[(traj_prev, k, i)][3] for i in range(M)], axis=0)
+        if traj_num % H == 0 or traj_num == 1:
+            print("Global communication!")
+            prevfedQ = np.nanmean([out_admm[(traj_prev, k, i)][2] for i in range(M)], axis=0)
+            prevfedR = np.nanmean([out_admm[(traj_prev, k, i)][3] for i in range(M)], axis=0)
 
-        # prevpfedP = np.nanmean([out_pfedadmm[(traj_prev, k, i)][1] for i in range(M)], axis=0)
-        prevpfedQ = np.nanmean([out_pfedadmm[(traj_prev, k, i)][2] for i in range(M)], axis=0)
-        prevpfedR = np.nanmean([out_pfedadmm[(traj_prev, k, i)][3] for i in range(M)], axis=0)
+            # prevpfedP = np.nanmean([out_pfedadmm[(traj_prev, k, i)][1] for i in range(M)], axis=0)
+            prevpfedQ = np.nanmean([out_pfedadmm[(traj_prev, k, i)][2] for i in range(M)], axis=0)
+            prevpfedR = np.nanmean([out_pfedadmm[(traj_prev, k, i)][3] for i in range(M)], axis=0)
 
         # _, prevfedP, prevfedQ, prevfedR = out_pfedadmm[(traj_prev, k, i)]
-        for i in range(M):
-            print(i, end=", ", flush=True)
-            _, xs, us = simulate(K_trues[i], i, N=N, seed=k, add_noise=noise_on_input_data, train=True)
+        for robot in range(M):
+            print(robot, end=", ", flush=True)
+            _, xs, us = simulate(K_trues[robot], robot, N=N, seed=k, add_noise=noise_on_input_data, train=True)
             # print(np.shape(xs))
-            xs_agg[i] = np.append(xs_agg[i], xs, axis=0)  # shape = N x n
-            us_agg[i] = np.append(us_agg[i], us, axis=0)
+            xs_agg[robot] = np.append(xs_agg[robot], xs, axis=0)  # shape = N x n
+            us_agg[robot] = np.append(us_agg[robot], us, axis=0)
+            #xs_agg[robot] = xs
+            #us_agg[robot] = us
             xs_centralized = np.vstack([xs_agg[i] for i in range(M)])
             us_centralized = np.vstack([us_agg[i] for i in range(M)])
+            # print(np.shape(xs_agg[robot]), np.shape(us_agg[robot]), np.shape(xs_centralized), np.shape(us_centralized))
 
-            if traj == 1:
+            if traj_num == 0:
                 prevfedP = np.zeros((n, n))
                 prevfedK = np.zeros((m, n))
                 prevpfedP = np.zeros((n, n))
@@ -376,18 +386,19 @@ for traj in traj_range:
                 prevpfedP = solve_discrete_are(A, B, prevpfedQ, prevpfedR)
                 prevpfedK = -np.linalg.solve(prevpfedR + B.T@prevpfedP@B, B.T@prevpfedP@A)
 
-            L = lambda K: cp.sum_squares(xs_agg[i]@K.T - us_agg[i])
+            L = lambda K: cp.sum_squares(xs_agg[robot]@K.T - us_agg[robot])
             Lcent = lambda K: cp.sum_squares(xs_centralized@K.T - us_centralized)
 
-            r = lambda K: alpha*cp.sum_squares(K)
+            r = lambda K: alphaK*cp.sum_squares(K)
             rPQR = lambda Q, R: alpha*(cp.sum_squares(Q) + cp.sum_squares(R))
+            # 200*(cp.sum_squares(Q-Q_trues[robot]) + cp.sum_squares(R-R_trues[robot]))#
 
-            LK = lambda K: np.linalg.norm(K - K_trues[i])
-            LQ = lambda Q: np.linalg.norm(Q - Q_trues[i])
-            LR = lambda R: np.linalg.norm(R - R_trues[i])
+            LK = lambda K: np.linalg.norm(K - K_trues[robot])
+            LQ = lambda Q: np.linalg.norm(Q - Q_trues[robot])
+            LR = lambda R: np.linalg.norm(R - R_trues[robot])
 
             Klr = policy_fitting(L, r, n=n, m=m)
-            print("ADMM")
+            # print("ADMM")
             if admm_QRreg:
                 Kadmm, Padmm, Qadmm, Radmm = policy_fitting_with_a_kalman_constraint(L, r, A, B,
                                                                                      n_random=nrandom,
@@ -398,7 +409,7 @@ for traj in traj_range:
                                                                                      n_random=nrandom,
                                                                                      niter=niter)
 
-            print("Centralized")
+            # print("Centralized")
             # Centralized
             if admm_QRreg:
                 Kcent, Pcent, Qcent, Rcent = policy_fitting_with_a_kalman_constraint(Lcent, r, A, B, niter=niter,
@@ -410,6 +421,7 @@ for traj in traj_range:
 
             # pFedADMM
             LpPQR = lambda Q, R: beta*(cp.sum_squares(Q - prevpfedQ) + cp.sum_squares(R - prevpfedR))
+            # LpPQR = lambda Q, R: 200*(cp.sum_squares(Q - Q_avg) + cp.sum_squares(R - R_avg))
             Kpfedadmm, Ppfedadmm, Qpfedadmm, Rpfedadmm = policy_fitting_with_a_kalman_constraint(L, r,
                                                                                                  A, B,
                                                                                                  niter=niter,
@@ -419,20 +431,20 @@ for traj in traj_range:
                                                                                                  R0=prevpfedR,
                                                                                                  LPQR=LpPQR, rPQR=rPQR)
 
-            cost_lr = simulate_cost(Klr, i, N=N_test, seed=0, average_over=average_over)
-            out_lr[(traj, k, i)] = Klr
-            cost_admm = simulate_cost(Kadmm, i, N=N_test, seed=0, average_over=average_over)
-            out_admm[(traj, k, i)] = (Kadmm, Padmm, Qadmm, Radmm)
-            cost_cent = simulate_cost(Kcent, i, N=N_test, seed=0, average_over=average_over)
-            out_centralized[(traj, k, i)] = (Kcent, Pcent, Qcent, Rcent)
+            cost_lr = simulate_cost(Klr, robot, N=N_test, seed=0, average_over=average_over)
+            out_lr[(traj, k, robot)] = Klr
+            cost_admm = simulate_cost(Kadmm, robot, N=N_test, seed=0, average_over=average_over)
+            out_admm[(traj, k, robot)] = (Kadmm, Padmm, Qadmm, Radmm)
+            cost_cent = simulate_cost(Kcent, robot, N=N_test, seed=0, average_over=average_over)
+            out_centralized[(traj, k, robot)] = (Kcent, Pcent, Qcent, Rcent)
             if traj == 1:
                 cost_fedadmm = np.nan
-                out_fedadmm[(traj, k, i)] = (np.nan, np.nan, np.nan, np.nan)
+                out_fedadmm[(traj, k, robot)] = (np.nan, np.nan, np.nan, np.nan)
             else:
-                cost_fedadmm = simulate_cost(prevfedK, i, N=N_test, seed=0, average_over=average_over)
-                out_fedadmm[(traj, k, i)] = (prevfedK, prevfedP, prevfedQ, prevfedR)
-            cost_pfedadmm = simulate_cost(Kpfedadmm, i, N=N_test, seed=0, average_over=average_over)
-            out_pfedadmm[(traj, k, i)] = (Kpfedadmm, Ppfedadmm, Qpfedadmm, Rpfedadmm)
+                cost_fedadmm = simulate_cost(prevfedK, robot, N=N_test, seed=0, average_over=average_over)
+                out_fedadmm[(traj, k, robot)] = (prevfedK, prevfedP, prevfedQ, prevfedR)
+            cost_pfedadmm = simulate_cost(Kpfedadmm, robot, N=N_test, seed=0, average_over=average_over)
+            out_pfedadmm[(traj, k, robot)] = (Kpfedadmm, Ppfedadmm, Qpfedadmm, Rpfedadmm)
 
             if np.isnan(cost_lr) or cost_lr > 1e5 or cost_lr == np.inf:
                 cost_lr = np.nan
@@ -464,11 +476,11 @@ for traj in traj_range:
             costs_pfedadmm_KQR[-1]['Q'].append(LQ(Qpfedadmm))
             costs_pfedadmm_KQR[-1]['R'].append(LR(Rpfedadmm))
 
-            loss_lr = np.linalg.norm(xs_agg[i]@Klr.T - us_agg[i])**2
-            loss_admm = np.linalg.norm(xs_agg[i]@Kadmm.T - us_agg[i])**2
-            loss_cent = np.linalg.norm(xs_agg[i]@Kcent.T - us_agg[i])**2
-            loss_fedadmm = np.linalg.norm(xs_agg[i]@prevfedK.T - us_agg[i])**2
-            loss_pfedadmm = np.linalg.norm(xs_agg[i]@Kpfedadmm.T - us_agg[i])**2
+            loss_lr = np.linalg.norm(xs_agg[robot]@Klr.T - us_agg[robot])**2
+            loss_admm = np.linalg.norm(xs_agg[robot]@Kadmm.T - us_agg[robot])**2
+            loss_cent = np.linalg.norm(xs_agg[robot]@Kcent.T - us_agg[robot])**2
+            loss_fedadmm = np.linalg.norm(xs_agg[robot]@prevfedK.T - us_agg[robot])**2
+            loss_pfedadmm = np.linalg.norm(xs_agg[robot]@Kpfedadmm.T - us_agg[robot])**2
             print('Llr = {}, Ladmm = {}, Lcentralized = {}, Lfedadmm = {}, Lpfedadmm = {}'.format(loss_lr, loss_admm,
                                                                                                   loss_cent,
                                                                                                   loss_fedadmm,
@@ -483,15 +495,15 @@ for traj in traj_range:
     avg_pfedadmmQ = np.zeros((n, n))
     avg_pfedadmmR = np.zeros((m, m))
     for k in seed_range:
-        for i in range(M):
-            avg_admmQ += out_admm[(traj, k, i)][2]/len(seed_range)/M
-            avg_admmR += out_admm[(traj, k, i)][3]/len(seed_range)/M
-            avg_centQ += out_centralized[(traj, k, i)][2]/len(seed_range)/M
-            avg_centR += out_centralized[(traj, k, i)][3]/len(seed_range)/M
-            avg_fedadmmQ += out_fedadmm[(traj, k, i)][2]/len(seed_range)/M
-            avg_fedadmmR += out_fedadmm[(traj, k, i)][3]/len(seed_range)/M
-            avg_pfedadmmQ += out_pfedadmm[(traj, k, i)][2]/len(seed_range)/M
-            avg_pfedadmmR += out_pfedadmm[(traj, k, i)][3]/len(seed_range)/M
+        for robot in range(M):
+            avg_admmQ += out_admm[(traj, k, robot)][2]/len(seed_range)/M
+            avg_admmR += out_admm[(traj, k, robot)][3]/len(seed_range)/M
+            avg_centQ += out_centralized[(traj, k, robot)][2]/len(seed_range)/M
+            avg_centR += out_centralized[(traj, k, robot)][3]/len(seed_range)/M
+            avg_fedadmmQ += out_fedadmm[(traj, k, robot)][2]/len(seed_range)/M
+            avg_fedadmmR += out_fedadmm[(traj, k, robot)][3]/len(seed_range)/M
+            avg_pfedadmmQ += out_pfedadmm[(traj, k, robot)][2]/len(seed_range)/M
+            avg_pfedadmmR += out_pfedadmm[(traj, k, robot)][3]/len(seed_range)/M
     true_admmQ_loss = np.linalg.norm(avg_admmQ - Q_avg)
     true_admmR_loss = np.linalg.norm(avg_admmR - R_avg)
     true_centQ_loss = np.linalg.norm(avg_centQ - Q_avg)
