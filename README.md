@@ -17,6 +17,9 @@ Paper Link: https://drive.google.com/file/d/1GvfAKxxFkInUe_8MVJKWhXGdy0RAgIo9/vi
 7. `figures` repo: Where all figures from `fedadmm_*.py` scripts are stored
 8. `figures_final` repo: Where the paper's figures are stored
 
+Note that the `data` and `figures` folders are empty right now. To access the actual data and figures I amassed over my quarter,
+an interested reader can revert back to the tagged commit `final_writeup` to download all the files.
+
 ## Installation Instructions
 Unfortunately, installation instructions for this repo are kinda a pain. Sorry! The main reason is that CVXPY's SCS 
 solver implementation doesn't work for matrices larger than 2x2 (as of 3/22/2021) unless you have it installed with `blas+lapack`,
