@@ -83,10 +83,10 @@ def latexify(fig_width=None, fig_height=None, columns=1):
 
     # MAX_HEIGHT_INCHES = 8.0
     MAX_HEIGHT_INCHES = 10
-    if fig_height > MAX_HEIGHT_INCHES:
-        print("WARNING: fig_height too large:" + fig_height +
-              "so will reduce to" + str(MAX_HEIGHT_INCHES) + "inches.")
-        fig_height = MAX_HEIGHT_INCHES
+    # if fig_height > MAX_HEIGHT_INCHES:
+    #     print("WARNING: fig_height too large:" + fig_height +
+    #           "so will reduce to" + str(MAX_HEIGHT_INCHES) + "inches.")
+    #     fig_height = MAX_HEIGHT_INCHES
 
     # NB (bart): default font-size in latex is 11. This should exactly match
     # the font size in the text if the figwidth is set appropriately.

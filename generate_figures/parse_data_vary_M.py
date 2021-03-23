@@ -87,7 +87,7 @@ fig = plt.figure()
 #
 # plt.scatter([np.linalg.norm(x) for x in Q_trues10Q10R], [np.linalg.norm(x) for x in R_trues10Q10R], c="red", marker='^', alpha=0.5)
 # # plt.scatter([np.linalg.norm(Q_pfedadmm10Q10R)], [np.linalg.norm(R_pfedadmm10Q10R)], s=100, c="red", marker="^")
-plt.boxplot(list(reversed([y1, y2, y3, y4, y5])), labels=x)
+plt.boxplot(list([y1, y2, y3, y4, y5]), labels=x)
 plt.axhline(cost_true, ls='--', c='k', label='Optimal')
 # plt.boxplot(ks, labels=x)
 # plt.boxplot(qs, labels=x)

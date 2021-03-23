@@ -1,13 +1,9 @@
-import numpy as np
-from scipy.linalg import solve_discrete_are
-import cvxpy as cp
 from ADMM_v2 import *
-from utils import *
 import matplotlib.pyplot as plt
 from datetime import datetime
 import time
 from scipy.stats import wishart
-from lqr_infinite_horizon_v2 import *
+from tests.lqr_infinite_horizon_v2 import *
 
 M = 1  # number of robots
 n, m = 4, 2  # dimension of state (n) and input (m)
